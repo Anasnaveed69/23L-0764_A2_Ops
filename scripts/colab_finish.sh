@@ -11,8 +11,8 @@ echo "== 3.2 MLflow toy -> DagsHub"
 python labs/mlflow_toy.py --lr 0.001 2>&1 | tail -3
 echo "== 2.7 toy tuner"
 python labs/tuner_toy.py 2>&1 | quiet | tail -25
-echo "== baseline CNN re-run"
-python scripts/run_experiments.py --only baseline_cnn 2>&1 | grep -E '>>>|best epoch [0-9]+ \||TEST:|run id|Error'
+echo "== re-run: baseline CNN (early-stopping fix), EfficientNetB0 (weights-name fix), autolog run"
+python scripts/run_experiments.py --only baseline_cnn effb0_default mnv2_autolog 2>&1 | grep -E '>>>|best epoch [0-9]+ \||TEST:|run id|Error|FAILED'
 echo "== compare / register / export"
 python scripts/compare_runs.py
 python scripts/register_model.py

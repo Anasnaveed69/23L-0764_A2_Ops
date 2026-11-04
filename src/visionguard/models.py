@@ -41,8 +41,12 @@ def _backbone(name: str, size: int) -> tuple[keras.Model, keras.layers.Layer]:
         # mobilenet_v2.preprocess_input maps [0,255] -> [-1,1]; same thing as a saveable layer.
         prep = layers.Rescaling(1.0 / 127.5, offset=-1.0, name="mobilenetv2_preprocess")
     elif name == "efficientnetb0":
-        base = keras.applications.EfficientNetB0(input_shape=shape, include_top=False,
-                                                 weights=BACKBONE_WEIGHTS, name="backbone")
+        # NOT name="backbone" here: EfficientNet derives the ImageNet weights file name from the
+        # model name ("<name>_notop.h5"), so a custom name gives a 403 on download. Load it under
+        # its own name, then wrap it in a sub-model called "backbone" (same layers, same weights).
+        eff = keras.applications.EfficientNetB0(input_shape=shape, include_top=False,
+                                                weights=BACKBONE_WEIGHTS)
+        base = keras.Model(eff.input, eff.output, name="backbone")
         # EfficientNet has its own Rescaling+Normalization inside and expects raw [0,255].
         prep = layers.Identity(name="efficientnet_preprocess")
     else:

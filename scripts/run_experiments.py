@@ -33,13 +33,19 @@ def main():
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--extra", nargs="*", default=[], help="overrides applied to every run")
     args = ap.parse_args()
+    failed = []
     for name, (overrides, flags) in RUNS.items():
         if args.only and name not in args.only:
             continue
         cmd = [sys.executable, str(ROOT / "scripts" / "train.py"), "--run-name", name, *flags,
                "--set", *overrides, *args.extra]
         print("\n" + "=" * 80 + f"\n>>> {' '.join(cmd)}\n" + "=" * 80, flush=True)
-        subprocess.run(cmd, check=True, cwd=ROOT)
+        # keep going if one run fails, so a single problem does not cancel the rest of the grid
+        if subprocess.run(cmd, cwd=ROOT).returncode != 0:
+            failed.append(name)
+    if failed:
+        print(f"\nFAILED runs: {failed}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
