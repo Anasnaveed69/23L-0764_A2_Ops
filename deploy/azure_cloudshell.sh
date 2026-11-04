@@ -6,7 +6,9 @@ set -euo pipefail
 
 RG=rg-23L-0764-A2-Ops
 VM=vm-23L-0764-A2-Ops
-SIZE=Standard_B2s                  # 2 vCPU / 4 GB: TensorFlow needs > 1 GB RAM at start-up
+# 2 vCPU / 4-8 GB: TensorFlow needs > 1 GB RAM at start-up. Student regions often lack capacity for
+# one size, so equivalent small sizes are tried in order.
+SIZES="${SIZES:-Standard_B2s Standard_B2s_v2 Standard_B2as_v2 Standard_B2ls_v2 Standard_D2s_v5 Standard_D2as_v5}"
 IMAGE=Ubuntu2404                   # x86-64: same tensorflow-cpu wheel as CI and the laptop
 # Azure for Students has an "Allowed resource deployment regions" policy; read it, nearby first.
 ALLOWED=$(az policy assignment list --query "[?displayName=='Allowed resource deployment regions'].parameters.listOfAllowedLocations.value[]" -o tsv | tr '\n' ' ')
@@ -33,16 +35,24 @@ else
     say "removing leftover resource group from an earlier failed attempt"
     az group delete -n "$RG" --yes
   fi
+  created=""
   for LOC in $REGIONS; do
-    say "trying region $LOC"
-    az group create -n "$RG" -l "$LOC" -o none || continue
-    if az vm create -g "$RG" -n "$VM" -l "$LOC" --image "$IMAGE" --size "$SIZE" \
-         --admin-username azureuser --generate-ssh-keys --public-ip-sku Standard \
-         --nsg-rule SSH --os-disk-size-gb 30 -o table; then
-      break
-    fi
-    az group delete -n "$RG" --yes || true
+    # only sizes this subscription can actually deploy in this region right now
+    AVAIL=$(az vm list-skus -l "$LOC" --resource-type virtualMachines --all false \
+            --query "[?length(restrictions)==\`0\`].name" -o tsv 2>/dev/null | tr '\n' ' ')
+    for SIZE in $SIZES; do
+      [[ " $AVAIL " == *" $SIZE "* ]] || continue
+      say "trying $SIZE in $LOC"
+      az group create -n "$RG" -l "$LOC" -o none || continue
+      if az vm create -g "$RG" -n "$VM" -l "$LOC" --image "$IMAGE" --size "$SIZE" \
+           --admin-username azureuser --generate-ssh-keys --public-ip-sku Standard \
+           --nsg-rule SSH --os-disk-size-gb 30 -o table 2>&1 | grep -v '^  File \|^    '; then
+        if az vm show -g "$RG" -n "$VM" >/dev/null 2>&1; then created=1; break 2; fi
+      fi
+      az group delete -n "$RG" --yes || true
+    done
   done
+  [ -n "$created" ] || { echo "no region/size combination worked"; exit 1; }
 fi
 
 say "cloud firewall (Network Security Group): allow 80 and 443"
