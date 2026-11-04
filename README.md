@@ -1,13 +1,13 @@
 # VisionGuard — AI-generated vs real image classifier
 
-[![CI](https://github.com/<github-user>/23L-0764_A2_Ops/actions/workflows/ci.yml/badge.svg)](https://github.com/<github-user>/23L-0764_A2_Ops/actions/workflows/ci.yml)
+[![CI](https://github.com/Anasnaveed69/23L-0764_A2_Ops/actions/workflows/ci.yml/badge.svg)](https://github.com/Anasnaveed69/23L-0764_A2_Ops/actions/workflows/ci.yml)
 
 MLOps Assignment 2 · **Anas Naveed Butt (23L-0764)** · project `23L-0764_A2_Ops`
 
 | | |
 |---|---|
-| DagsHub (code, data, experiments, registry) | https://dagshub.com/&lt;dagshub-user&gt;/23L-0764_A2_Ops |
-| Model API (cloud) | https://&lt;api-domain&gt; — `GET /health`, `POST /v1/predict` |
+| DagsHub (code, data, experiments, registry) | https://dagshub.com/Anasnaveed69/23L-0764_A2_Ops |
+| Model API (cloud) | https://20-219-10-43.sslip.io — `GET /health`, `POST /v1/predict` |
 | Report | `report/` (LaTeX) → `23L-0764_VisionGuard.pdf` |
 
 ## Architecture
