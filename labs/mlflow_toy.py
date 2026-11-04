@@ -41,12 +41,14 @@ def main():
     keras.utils.set_random_seed(0)
 
     (x, y), (xt, yt) = keras.datasets.fashion_mnist.load_data()
-    x, xt = x[:10000] / 255.0, xt[:2000] / 255.0
-    y, yt = y[:10000], yt[:2000]
+    x, xt = (x[:10000] / 255.0).astype("float32"), (xt[:2000] / 255.0).astype("float32")
+    y, yt = y[:10000].astype("int32"), yt[:2000].astype("int32")
     model = keras.Sequential([
         keras.Input((28, 28)), keras.layers.Flatten(),
         keras.layers.Dense(args.units, activation="relu"), keras.layers.Dense(10, "softmax")])
-    model.compile(keras.optimizers.Adam(args.lr), "sparse_categorical_crossentropy", ["accuracy"])
+    model.compile(optimizer=keras.optimizers.Adam(args.lr),
+                  loss=keras.losses.SparseCategoricalCrossentropy(),
+                  metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")])
 
     with mlflow.start_run(run_name=f"toy_lr_{args.lr}") as run:
         mlflow.set_tags({"lab": "3.1", "author": "23L-0764", "dataset": "fashion_mnist[:10k]"})

@@ -15,15 +15,17 @@ def build(hp):
         keras.Input((28, 28)), keras.layers.Flatten(),
         keras.layers.Dense(hp.Int("units", 32, 512, step=32), activation="relu"),
         keras.layers.Dense(10, activation="softmax")])
-    model.compile(keras.optimizers.Adam(hp.Choice("lr", [1e-2, 1e-3, 1e-4])),
-                  "sparse_categorical_crossentropy", ["accuracy"])
+    model.compile(optimizer=keras.optimizers.Adam(hp.Choice("lr", [1e-2, 1e-3, 1e-4])),
+                  loss=keras.losses.SparseCategoricalCrossentropy(),
+                  metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")])
     return model
 
 
 def main():
     keras.utils.set_random_seed(0)
     (x, y), (xt, yt) = keras.datasets.fashion_mnist.load_data()
-    x, xt = x / 255.0, xt / 255.0
+    x, xt = (x / 255.0).astype("float32"), (xt / 255.0).astype("float32")
+    y, yt = y.astype("int32"), yt.astype("int32")
     tuner = kt.Hyperband(build, objective="val_accuracy", max_epochs=8, factor=3, seed=0,
                          directory=str(ROOT / "tuner_runs"), project_name="toy_fmnist",
                          overwrite=True)
