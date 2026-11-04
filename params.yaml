@@ -33,13 +33,15 @@ train:
   augment: true
   epochs_head: 12              # stage 1: frozen backbone, train new head
   epochs_finetune: 10          # stage 2: last block unfrozen
-  epochs_baseline: 30
+  epochs_baseline: 40
   lr_head: 0.001
   lr_finetune: 0.00001         # 100x smaller than lr_head
-  lr_baseline: 0.001
+  lr_baseline: 0.0003          # lower than the head LR: from-scratch weights + BN are unstable at 1e-3
   dropout: 0.3
   unfreeze: last_block         # last_block | none | <int number of layers from the end>
   early_stop_patience: 4
+  early_stop_patience_baseline: 8
+  warmup_epochs_baseline: 6     # early stopping cannot trigger before this epoch (baseline only)
   reduce_lr_patience: 2
 
 eval:

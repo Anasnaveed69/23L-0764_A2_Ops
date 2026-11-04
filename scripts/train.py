@@ -40,13 +40,20 @@ from visionguard.tracking import (  # noqa: E402
 
 def callbacks(params, ckpt_path: Path, manual: bool, offset: int, ckpt=None):
     t = params["train"]
+    scratch = t["model"] == "baseline"
     cbs = [
-        keras.callbacks.EarlyStopping(monitor="val_loss", patience=t["early_stop_patience"],
+        # A CNN from scratch with BatchNorm has very noisy val_loss in its first epochs (BN running
+        # statistics are still settling), so it gets more patience and a warm-up before early
+        # stopping may trigger; otherwise it stops at epoch 1 having learned nothing.
+        keras.callbacks.EarlyStopping(monitor="val_loss",
+                                      patience=t["early_stop_patience_baseline"] if scratch
+                                      else t["early_stop_patience"],
+                                      start_from_epoch=t["warmup_epochs_baseline"] if scratch else 0,
                                       restore_best_weights=True, verbose=1),
         keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.3,
                                           patience=t["reduce_lr_patience"], min_lr=1e-7, verbose=1),
         ckpt or keras.callbacks.ModelCheckpoint(ckpt_path, monitor="val_loss", save_best_only=True,
-                                                verbose=1),
+                                                initial_value_threshold=None, verbose=1),
     ]
     if manual:
         cbs.append(MLflowEpochLogger(offset=offset))
