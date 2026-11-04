@@ -1,0 +1,19 @@
+{
+  "n_files": 973,
+  "n_readable": 973,
+  "n_corrupt": 0,
+  "n_duplicates": 1,
+  "n_dup_groups": 1,
+  "n_label_conflicts": 0,
+  "n_unknown_label": 0,
+  "per_class": {
+    "AI-generated": 538,
+    "Real": 435
+  },
+  "example_duplicate_groups": [
+    [
+      "data/raw/AiArtData/AiArtData/image33.jpg",
+      "data/raw/AiArtData/AiArtData/image34.jpg"
+    ]
+  ]
+}
