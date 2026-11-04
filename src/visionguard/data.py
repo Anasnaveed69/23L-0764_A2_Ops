@@ -1,6 +1,8 @@
 """tf.data input pipeline built from the split lists produced by scripts/03_make_splits.py."""
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +62,15 @@ def make_dataset(df: pd.DataFrame, params: dict, training: bool,
 
     ds = tf.data.Dataset.from_tensor_slices((df["path"].astype(str).values, df["label"].values))
     ds = ds.map(_loader(size, mode), num_parallel_calls=AUTOTUNE, deterministic=True)
-    ds = ds.cache()  # decode each file once; later epochs read from RAM
+    # Decode each file once. In RAM by default; if VG_CACHE_DIR is set, on disk so that the
+    # next run with the same files/size/resize-mode (e.g. the 8 experiment runs) skips decoding.
+    cache_dir = os.getenv("VG_CACHE_DIR")
+    if cache_dir:
+        key = hashlib.md5(("|".join(df["path"].astype(str)) + f"|{size}|{mode}").encode()).hexdigest()
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        ds = ds.cache(str(Path(cache_dir) / f"vg_{key[:12]}"))
+    else:
+        ds = ds.cache()
     if training:
         ds = ds.shuffle(len(df), seed=seed, reshuffle_each_iteration=True)
     ds = ds.batch(bs)
