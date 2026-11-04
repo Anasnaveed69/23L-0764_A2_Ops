@@ -1,22 +1,25 @@
 \chapter{Data Understanding and Versioning}\label{ch:data}
 
 \section{Environment}
-\textbf{What and why.} I created an isolated virtual environment so the exact library versions
-of this project cannot clash with other projects on my machine, and so anyone can rebuild the
-same environment from \file{requirements.txt}. Every version is pinned (e.g.\ TensorFlow 2.20.0,
-Keras 3.15.1, MLflow 2.22.5, Keras Tuner 1.4.7, DVC 3.67.1).
+\textbf{What and why.} Every part of the project runs in an isolated environment, so library
+versions cannot clash with anything else and anyone can rebuild the same set:
+\begin{itemize}
+\item \textbf{Training/data}: a Google Colab runtime, i.e.\ a fresh, disposable Linux VM per
+session with an NVIDIA T4 GPU. On top of Colab's own TensorFlow/Keras the notebooks install
+pinned versions of the tracking stack (MLflow 2.22.5, Keras Tuner 1.4.7, DVC 3.67.1) and my package
+\texttt{visionguard} in editable mode (\cmd{pip install -e .}).
+\item \textbf{Serving}: Docker images with pinned \file{requirements-serve.txt} and
+\file{requirements-tf.txt} (\cref{ch:docker}).
+\item \textbf{Local development}: \cmd{py -m venv .venv} creates a private interpreter with an empty
+\cmd{site-packages}; \cmd{pip install -r requirements.txt} installs the pinned set (Python 3.11/3.12).
+\end{itemize}
+\file{scripts/00_env_check.py} prints the date, user and host, the Python version, every library
+version, whether a virtualenv is active, and what TensorFlow can see with
+\cmd{tf.config.list_physical_devices("GPU")}. In the Colab runtime it reports TensorFlow 2.21.0
+built with CUDA and \textbf{one visible GPU}. (It also reports ``in virtualenv: False'': Colab's
+isolation is the whole throw-away VM, not a venv inside it.)
 
-\textbf{How.} \cmd{py -3.11 -m venv .venv} creates a private copy of the interpreter and an empty
-\cmd{site-packages}; activating it puts that interpreter first on \texttt{PATH}.
-\cmd{pip install -r requirements.txt} installs the pinned set and \cmd{pip install -e .} installs
-my own package \texttt{visionguard} (in \file{src/}) in editable mode so every script imports the
-same code. \file{scripts/00_env_check.py} prints the user, host, Python, every library version,
-whether the interpreter is inside a virtualenv, and what TensorFlow can see:
-\cmd{tf.config.list_physical_devices("GPU")}. On my laptop TensorFlow sees only the CPU (native
-Windows TensorFlow has no GPU support after 2.10), so the heavy training runs were executed on a
-Colab T4 GPU with the same pinned tracking libraries (\cref{sec:2-0}).
-
-\shot{s1_1_env}{Exact library versions, virtualenv check and GPU visibility (\file{scripts/00_env_check.py}).}
+\shot{s1_1_env}{Exact library versions and GPU visibility (\file{scripts/00_env_check.py} in the Colab runtime).}
 
 \textbf{Why MLflow 2.x and not 3.x?} MLflow 3 logs models through a new ``logged models'' REST
 API. DagsHub's hosted tracking server implements the MLflow 2 API, so I pinned the client to the

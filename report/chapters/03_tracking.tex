@@ -155,5 +155,9 @@ and image size from the version's \file{model_meta.json}, and classifies one ima
 \textbf{How the champion reaches the server.} The serving processes must not call DagsHub per
 request. \file{scripts/export_champion.py} resolves \texttt{@champion} \emph{once}, downloads
 \file{model.keras} and writes \file{models/champion.keras} plus \file{champion.json} (version,
-threshold, image size). Locally that folder is mounted read-only into the web container; for the
-cloud API the file is copied into the image at build time (\cref{ch:docker,ch:deploy}).
+threshold, image size). It re-saves the model without optimizer state (serving never trains),
+which makes it 9.6\,MB. That exported copy is committed to Git (it is small, inference-only and
+regenerable from the registry, which stays the source of truth), so CI and the cloud VM can build
+the API image without registry credentials. Locally the \file{models/} folder is mounted read-only
+into the web container; for the cloud API the file is copied into the image at build time
+(\cref{ch:docker,ch:deploy}).

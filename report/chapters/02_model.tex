@@ -3,10 +3,12 @@
 \section*{Where training ran}\label{sec:2-0}
 All model code lives in \file{src/visionguard/} and is driven by \file{scripts/train.py}; every
 setting comes from \file{params.yaml} and can be overridden per run
-(\cmd{--set train.lr_head=0.0001}). Data preparation ran on my laptop; the training runs ran on a
-Google Colab T4 GPU (\file{notebooks/train_colab.ipynb}), which clones the same commit from GitHub
-and pulls the same data version with \cmd{dvc pull}, so a run is fully identified by the
-\texttt{git\_commit} and \texttt{dvc\_data\_version} tags it logs.
+(\cmd{--set train.lr_head=0.0001}). Everything ran on a Google Colab T4 GPU in two notebooks:
+\file{notebooks/01_data_colab.ipynb} (download from Kaggle, audit, EDA, splits, DVC push) and
+\file{notebooks/02_train_colab.ipynb} (training, tuning, tracking). The second one clones the
+repository from GitHub and pulls the exact data version with \cmd{dvc pull}, so a run is fully
+identified by the \texttt{git\_commit} and \texttt{dvc\_data\_version} tags it logs. Colab already
+ships a matching TensorFlow/Keras pair, so only the tracking libraries are pinned there.
 
 \section{Input pipeline}
 \textbf{Stages} (\file{src/visionguard/data.py}, \texttt{make\_dataset}):

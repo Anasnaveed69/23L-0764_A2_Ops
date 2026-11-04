@@ -96,7 +96,7 @@ reachable only from containers on \texttt{backend}, not from my machine or the n
 
 \textbf{How the model reaches the container: mounted.} \file{./models} is bind-mounted read-only
 at \file{/app/models}. Promoting a new champion is then \cmd{python scripts/export_champion.py}
-and \cmd{docker compose restart web}; no rebuild, and the 14\,MB model is not duplicated into
+and \cmd{docker compose restart web}; no rebuild, and the 9.6\,MB model is not duplicated into
 every image version. \texttt{:ro} means the app cannot modify it. For the cloud API I made the
 opposite choice (built in, \cref{ch:deploy}) because there the image is shipped to another machine
 and should be self-contained and immutable.
