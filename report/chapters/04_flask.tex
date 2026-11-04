@@ -1,0 +1,97 @@
+\chapter{Flask Web Application}\label{ch:flask}
+
+\section{Inference module}
+\file{src/visionguard/inference.py} defines \texttt{Predictor}. Its constructor runs once per
+process: it loads \file{champion.keras} with \texttt{keras.models.load\_model}, reads
+\file{champion.json} (image size, resize mode, threshold, version), and runs one dummy prediction
+to warm up the TensorFlow graph. \texttt{predict\_bytes(data)} decodes the bytes, resizes them,
+predicts $p(\text{AI})$, applies the threshold and returns label, confidence (probability of the
+predicted label), $p(\text{AI})$, threshold, model name/version and latency.
+
+\textbf{Why not load per request.} Loading deserialises millions of weights and builds the graph:
+it takes seconds and hundreds of MB. Per request, every user would wait for it, memory would
+spike with concurrent requests, and the first predict of a fresh model is the slowest one. Loading
+once and keeping the model in memory makes each prediction tens of milliseconds.
+
+\textbf{Why training and serving preprocessing must match.} The model only learned the mapping
+from \emph{the inputs it saw}. If serving resized with a different interpolation, kept the alpha
+channel, scaled to a different range or preserved the aspect ratio when training did not, the
+inputs would come from a different distribution and predictions would silently degrade, with no
+error raised (\emph{training/serving skew}). I removed the possibility by construction: training,
+audit and serving call the same \texttt{decode\_and\_resize} function, the image size and resize
+mode travel with the model in \file{champion.json}, and backbone-specific scaling is a layer
+inside the saved model.
+
+\shot{s4_1_console}{\file{scripts/infer_cli.py}: model loaded once, then two known test images (one AI, one real).}
+
+\section{Routes and validation}
+\begin{tabularx}{\linewidth}{>{\ttfamily}l l X}
+\toprule
+Route & Method & Purpose \\
+\midrule
+/ & GET & upload page (drag \& drop, client-side preview, last 5 checks) \\
+/predict & POST & validate, predict, write DB row, redirect to the result (Post/Redirect/Get) \\
+/result/<id> & GET & verdict, confidence, $p(\text{AI})$ vs threshold, caveat, audit record \\
+/history & GET & paginated database trail, filter by verdict, show rejected uploads \\
+/api/history & GET & the same trail as JSON \\
+/health & GET & JSON health check: DB reachable, model backend reachable, model version \\
+\bottomrule
+\end{tabularx}
+
+\textbf{Validation} (\file{src/visionguard/validation.py}), cheapest check first:
+\begin{enumerate}
+\item No file $\rightarrow$ 400.
+\item Extension not in \{jpg, jpeg, png, webp, bmp, gif\} $\rightarrow$ \textbf{415 Unsupported file type}.
+\item Size: Flask's \texttt{MAX\_CONTENT\_LENGTH} rejects oversized bodies before my code runs,
+and the stream is read with a hard limit of 5\,MB + 1 byte $\rightarrow$ \textbf{413 File too large}.
+\item Full decode with Pillow (verify + load) $\rightarrow$ \textbf{422 Not a readable image} for
+renamed non-images or truncated files. Pillow's decompression-bomb limit is also set.
+\end{enumerate}
+File names go through \texttt{werkzeug.utils.secure\_filename} (e.g.\
+\texttt{../../etc/passwd.png} becomes \texttt{etc\_passwd.png}) and are only stored as text.
+The upload is read into memory and \textbf{never written to disk}: only its SHA-256 hash, size
+and dimensions are kept. Every error renders a friendly page with the status code, a plain
+explanation and a way back; unexpected exceptions are logged with a traceback but the user only
+sees a generic 500 page.
+
+\shot[0.8]{s4_2_wrong_type}{Failure case 1: wrong file type (415).}
+\shot[0.8]{s4_2_too_large}{Failure case 2: file over the size limit (413).}
+\shot[0.8]{s4_2_corrupt}{Failure case 3: a text file renamed to \texttt{.jpg} (422).}
+
+\section{HTML and CSS}
+Templates use Jinja inheritance (\file{base.html} holds the header, navigation with the History
+menu, and the footer showing the model version and inference mode). The result page shows the
+verdict in the class colour, a confidence bar, a scale with the decision threshold and the
+model's $p(\text{AI})$, a ``low certainty'' badge under 65\%, and an honest caveat box: the result
+is a statistical estimate, weakest on screenshots, heavy compression and newer generators, tuned to
+avoid false accusations, and never sufficient on its own. The stylesheet is plain CSS with a dark
+mode and a mobile layout.
+
+\shot{s4_3_upload}{Upload page.}
+\shot{s4_3_result}{Result page with verdict, confidence, threshold scale and caveat.}
+\shot{s4_3_history}{History menu: the database trail.}
+
+\begin{wrongbox}
+With the threshold chosen on validation data below 0.5 (e.g.\ 0.47), an image with
+$p(\text{AI})=0.49$ is labelled AI-generated with a ``confidence'' of 49\%, which looks
+contradictory. The number is honest (it is the model's probability for that label), so instead of
+hiding it the page now shows the threshold scale and a ``low certainty'' badge.
+\end{wrongbox}
+
+\section{Configuration and production server}
+All settings are environment variables read in \file{app/config.py}: \texttt{MODEL\_PATH},
+\texttt{THRESHOLD} (optional override), \texttt{DATABASE\_URL}, \texttt{INFERENCE\_MODE}
+(\texttt{local}/\texttt{remote}), \texttt{MODEL\_API\_URL}, \texttt{MODEL\_API\_KEY},
+\texttt{MAX\_UPLOAD\_MB}, \texttt{SECRET\_KEY}, \texttt{FLASK\_DEBUG}. The same image therefore
+runs on my laptop, in Compose and against the cloud API without code changes, and no secret is in
+the code or the image.
+
+In the container the app is served by \textbf{gunicorn} (1 worker, 4 threads), not by
+\cmd{flask run}: Flask's built-in server is single-process, not hardened, and meant for
+development. Debug mode is \textbf{off} (\texttt{FLASK\_DEBUG=0}, visible as
+\texttt{"debug": false} in \texttt{/health}) because the Werkzeug debugger lets anyone who
+triggers an error execute arbitrary Python in the browser, and debug pages leak source code and
+configuration. One worker keeps one copy of the model in RAM; threads overlap waiting on the
+database and the network.
+
+\shot{s4_4_health}{\texttt{/health} response: database ok, model backend ok, debug false.}

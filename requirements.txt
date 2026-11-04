@@ -1,0 +1,20 @@
+# Full development / training environment (Task 1.1). Python 3.11 or 3.12 recommended.
+# On Windows/macOS use `tensorflow`; on Linux `tensorflow-cpu` is ~4x smaller if you have no GPU.
+tensorflow==2.20.0
+keras==3.15.1
+keras-tuner==1.4.7
+mlflow==2.22.5          # 2.x: DagsHub's hosted MLflow server speaks the 2.x REST API
+dagshub==0.7.*
+dvc[s3]==3.67.1
+numpy>=1.26,<2.3
+pandas>=2.2
+pillow>=11.0
+scikit-learn>=1.5
+matplotlib>=3.9
+pyyaml>=6.0
+python-dotenv>=1.0
+requests>=2.32
+-r requirements-serve.txt
+# dev tools
+pytest>=8.3
+ruff>=0.7

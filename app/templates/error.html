@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<section class="card error-card">
+  <div class="error-code">{{ status }}</div>
+  <h1>{{ title }}</h1>
+  <p>{{ message }}</p>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('main.index') }}">Try another image</a>
+    <a class="btn ghost" href="{{ url_for('main.history') }}">History</a>
+  </div>
+</section>
+{% endblock %}

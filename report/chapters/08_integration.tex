@@ -1,0 +1,28 @@
+\chapter{Integrating Flask and the Cloud API}\label{ch:integration}
+
+\textbf{How it works.} The web app has two interchangeable back-ends behind one interface
+(\file{app/predictors.py}): \texttt{LocalPredictor} wraps the in-process \texttt{Predictor};
+\texttt{RemotePredictor} sends the validated image bytes as multipart form data to
+\texttt{MODEL\_API\_URL/v1/predict} with the \texttt{X-API-Key} header over HTTPS, through one
+re-used \texttt{requests.Session} (connection pooling) with a 30\,s timeout. Switching is one
+environment variable, \texttt{INFERENCE\_MODE=remote}; routes, templates and the database code are
+unchanged. In remote mode the web image can be built without TensorFlow
+(\texttt{WITH\_TF=false}), because the model lives only in the cloud.
+
+The flow per upload: the browser posts to \texttt{/predict} $\rightarrow$ the web app validates
+the file locally (wrong types never leave my machine) $\rightarrow$ calls the API $\rightarrow$
+stores the decision, the model version reported by the API, \texttt{inference\_mode = remote} and
+the round-trip latency in PostgreSQL $\rightarrow$ shows the result page. If the API is unreachable
+or answers with an error, the user gets a friendly 503 page and the attempt is still recorded with
+\texttt{status = error}.
+
+\shot{s8_health_remote}{Web app health in remote mode: model backend = the cloud API.}
+\shot{s8_send_samples}{Eight test images sent through the Flask app (truth vs verdict).}
+\shot{s8_result_1}{Upload 1 through the UI, answered by the cloud model.}
+\shot{s8_result_2}{Upload 2.}
+\shot{s8_result_3}{Upload 3.}
+\shot{s8_history}{History menu: the database log, with \texttt{mode = remote} rows.}
+\shot{s8_vm_logs}{The same requests arriving in the API logs on the Azure VM.}
+
+\yours{Summarise the multi-input test: e.g.\ ``of 8 test images, 7 were classified correctly; the
+error was a heavily compressed real portrait, consistent with the error analysis in Section 2.6''.}

@@ -1,0 +1,43 @@
+\chapter{Database Trail}\label{ch:db}
+
+\textbf{What and why.} Every request leaves a permanent row answering: \emph{what} was decided,
+\emph{when}, \emph{by which model}, and \emph{how confidently}. I use \textbf{PostgreSQL} in the
+Compose stack (durable, concurrent writes, a named volume) and SQLite for local runs and unit
+tests; the code is the same because it goes through SQLAlchemy and only the
+\texttt{DATABASE\_URL} changes.
+
+\begin{table}[H]\centering\small
+\begin{tabularx}{\linewidth}{>{\ttfamily}l l X}
+\toprule
+Column & Type & Meaning \\
+\midrule
+id & integer PK & record number, shown on the result page \\
+created\_at & timestamptz (indexed) & UTC time of the request (\emph{when}) \\
+status & varchar & \texttt{ok}, \texttt{rejected} (failed validation) or \texttt{error} (model unreachable) \\
+filename & varchar & sanitised upload name \\
+image\_sha256 & char(64) & identifies the image without storing it; repeated uploads are detectable \\
+width, height, size\_kb & int/float & basic properties of the upload \\
+label & varchar (indexed) & the decision: AI-generated / Real (\emph{what}) \\
+confidence, prob\_ai, threshold & float & \emph{how confidently}, and the rule that produced the label \\
+model\_name, model\_version & varchar & \emph{which model} (registry name and version) \\
+inference\_mode & varchar & \texttt{local} (in-process) or \texttt{remote} (cloud API) \\
+latency\_ms & float & prediction or round-trip time \\
+error & varchar & reason for a rejected or failed request \\
+\bottomrule
+\end{tabularx}
+\caption{Table \texttt{predictions}.}\end{table}
+
+\textbf{How it is attached to the views.} \file{app/db.py} creates the engine once at start-up
+(with a retry loop in case the database is still starting) and creates the table if needed. In
+\texttt{/predict}, after the model returns, one row is inserted in its own transaction
+(\texttt{Session.begin()} commits or rolls back automatically) and the browser is redirected to
+\texttt{/result/<id>}, which reads that row back, so the result page itself proves the record
+exists. Rejected uploads and model failures are recorded too, so the trail is complete, not just
+the successes.
+
+\textbf{History menu.} \texttt{/history} shows the newest records first, 20 per page, with
+totals per verdict, filters (AI-generated / Real) and a toggle to show rejected uploads.
+\texttt{/api/history} returns the same rows as JSON.
+
+\shot{s5_history}{History page backed by PostgreSQL.}
+\shot{s5_db_query}{The same records queried directly in PostgreSQL inside the \texttt{db} container.}

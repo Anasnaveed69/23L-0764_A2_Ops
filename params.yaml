@@ -1,0 +1,54 @@
+# VisionGuard — single source of truth for every tunable setting.
+# Scripts read this file; CLI flags (e.g. --set train.lr_head=0.0005) override it per run,
+# and every value actually used is logged to MLflow as a parameter.
+
+project:
+  name: 23L-0764_A2_Ops
+  experiment: VisionGuard
+  registered_model: VisionGuard-23L-0764
+  seed: 42
+
+data:
+  raw_dir: data/raw            # Kaggle archive extracted here (tracked by DVC)
+  splits_dir: data/splits      # train.csv / val.csv / test.csv (tracked by Git, tiny)
+  audit_csv: reports/audit/audit.csv
+  # Top-level folder name (case-insensitive substring) -> label. 1 = AI-generated, 0 = real.
+  class_map:
+    aiart: 1
+    ai: 1
+    fake: 1
+    real: 0
+  val_frac: 0.15
+  test_frac: 0.15
+  min_side: 32                 # images smaller than this are treated as unusable
+
+image:
+  size: 224                    # square side fed to the network
+  resize_mode: squash          # squash = plain resize (aspect ratio NOT kept) | pad = letterbox
+
+train:
+  model: transfer              # baseline | transfer
+  backbone: mobilenetv2        # mobilenetv2 | efficientnetb0
+  batch_size: 32
+  augment: true
+  epochs_head: 12              # stage 1: frozen backbone, train new head
+  epochs_finetune: 10          # stage 2: last block unfrozen
+  epochs_baseline: 30
+  lr_head: 0.001
+  lr_finetune: 0.00001         # 100x smaller than lr_head
+  lr_baseline: 0.001
+  dropout: 0.3
+  unfreeze: last_block         # last_block | none | <int number of layers from the end>
+  early_stop_patience: 4
+  reduce_lr_patience: 2
+
+eval:
+  # Positive class = AI-generated. Threshold is chosen on VALIDATION data by maximising F-beta
+  # with beta < 1, which weights precision of the "AI" verdict more than recall: calling a real
+  # photo fake (false positive) is the costlier error for this product.
+  threshold_beta: 0.5
+
+tuner:
+  max_trials: 10
+  epochs: 6
+  directory: tuner_runs

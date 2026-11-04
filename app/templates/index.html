@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Analyse an image{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">AI-generated image detector</p>
+    <h1>Was this picture made by a camera or a generator?</h1>
+    <p class="lede">Upload a JPG, PNG, WEBP, BMP or GIF up to {{ max_mb }}&nbsp;MB. The image is analysed in memory and never saved; only the verdict is logged.</p>
+  </div>
+</section>
+
+<form class="card upload" action="{{ url_for('main.predict') }}" method="post" enctype="multipart/form-data" id="upload-form">
+  <label class="drop" id="drop">
+    <input type="file" name="image" id="file" accept=".jpg,.jpeg,.png,.webp,.bmp,.gif" hidden>
+    <img id="preview" alt="" hidden>
+    <div class="drop-text" id="drop-text">
+      <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <strong>Drop an image here</strong>
+      <span>or click to browse</span>
+    </div>
+  </label>
+  <div class="upload-bar">
+    <span id="fname" class="muted">No file chosen</span>
+    <button class="btn" type="submit" id="submit">Analyse image</button>
+  </div>
+</form>
+
+{% if recent %}
+<section class="recent">
+  <div class="section-head"><h2>Latest checks</h2><a href="{{ url_for('main.history') }}">Full history →</a></div>
+  <ul class="recent-list">
+    {% for r in recent %}
+    <li><a href="{{ url_for('main.result', rec_id=r.id) }}">
+      <span class="pill {{ 'ai' if r.label == 'AI-generated' else 'real' }}">{{ r.label }}</span>
+      <span class="truncate">{{ r.filename }}</span>
+      <span class="muted">{{ '%.0f' % (r.confidence * 100) }}%</span>
+    </a></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+const input = document.getElementById('file'), drop = document.getElementById('drop'),
+      prev = document.getElementById('preview'), txt = document.getElementById('drop-text'),
+      fname = document.getElementById('fname'), form = document.getElementById('upload-form'),
+      btn = document.getElementById('submit');
+function show(f) {
+  if (!f) return;
+  fname.textContent = `${f.name} · ${(f.size / 1024 / 1024).toFixed(2)} MB`;
+  if (f.type.startsWith('image/')) {
+    const r = new FileReader();
+    r.onload = e => { prev.src = e.target.result; prev.hidden = false; txt.hidden = true; };
+    r.readAsDataURL(f);
+  }
+}
+input.addEventListener('change', () => show(input.files[0]));
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { input.files = e.dataTransfer.files; show(input.files[0]); });
+form.addEventListener('submit', () => { btn.disabled = true; btn.textContent = 'Analysing…'; });
+</script>
+{% endblock %}

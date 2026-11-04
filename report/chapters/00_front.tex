@@ -1,0 +1,64 @@
+\chapter*{Project Information}
+\addcontentsline{toc}{chapter}{Project Information}
+\markboth{Project Information}{}
+
+\section*{Links and graded version}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\linewidth}{>{\bfseries}l X}
+\toprule
+GitHub repository & \url{\GitHubURL} \\
+DagsHub project (code, data, experiments, registry) & \url{\DagsHubURL} \\
+MLflow tracking server & \url{\MLflowURL} \\
+Live model API (cloud) & \url{\APIURL} \quad (\texttt{GET /health}, \texttt{POST /v1/predict}) \\
+Web application & Flask on \texttt{http://localhost:5000} calling the API above (Task 8 design) \\
+Commit hash of graded version & \texttt{\CommitHash} \\
+\bottomrule
+\end{tabularx}
+
+\section*{System at a glance}
+VisionGuard is a web service that estimates whether an uploaded image was produced by a generative
+model or by a camera. The pipeline is: Kaggle dataset $\rightarrow$ audit and cleaning
+$\rightarrow$ DVC-versioned data on DagsHub $\rightarrow$ \texttt{tf.data} pipeline $\rightarrow$
+two Keras models (a CNN from scratch and a fine-tuned MobileNetV2) $\rightarrow$ every run tracked
+in MLflow on DagsHub $\rightarrow$ the best model registered with alias \texttt{champion}
+$\rightarrow$ a model API container on an Azure VM behind HTTPS $\rightarrow$ a Flask web app in
+Docker Compose with a PostgreSQL audit trail, calling that API.
+
+\begin{figure}[H]\centering\small
+\setlength{\fboxsep}{6pt}
+\begin{tabular}{c}
+\fbox{\parbox{0.9\linewidth}{\centering
+\textbf{Browser} $\;\rightarrow\;$ \textbf{Flask web app} (Docker, :5000) $\;\rightarrow\;$ \textbf{PostgreSQL} (internal network, named volume)\\[3pt]
+\hspace*{3.2cm}$\downarrow$ HTTPS + \texttt{X-API-Key}\\[3pt]
+\textbf{Azure VM}: Caddy (TLS) $\rightarrow$ gunicorn/Flask model API $\rightarrow$ \texttt{champion.keras} (TensorFlow-CPU)}}\\[6pt]
+\fbox{\parbox{0.9\linewidth}{\centering
+Kaggle $\rightarrow$ DVC (DagsHub storage) $\rightarrow$ \texttt{tf.data} $\rightarrow$ Keras $\rightarrow$
+MLflow (DagsHub) $\rightarrow$ Registry \texttt{@champion} $\rightarrow$ \texttt{export\_champion.py} $\rightarrow$ image build}}
+\end{tabular}
+\caption{Serving path (top) and training path (bottom).}
+\end{figure}
+
+\section*{Disclosure of AI assistance and tutorials}
+I used an AI assistant, Claude (Anthropic), extensively in this assignment:
+\begin{itemize}
+\item \textbf{Code}: Claude wrote most of the code in the repository (data scripts, training and
+tracking code, Flask app, API, Dockerfiles, Compose files, CI workflow, Colab notebooks), which I
+reviewed.
+\item \textbf{Execution}: through the Claude desktop app, Claude operated my browser to run the
+Colab notebooks, create the GitHub/DagsHub repositories and set up the Azure VM via Cloud Shell,
+while I signed in to each service, created the access tokens and entered all secrets myself.
+\item \textbf{Report}: Claude drafted the explanations in this report; I checked them against
+my results and edited them. All numbers, tables and plots come from the actual runs (they are
+written by the project scripts from MLflow and the evaluation code, not typed by hand).
+\end{itemize}
+Documentation consulted: TensorFlow/Keras guides (\texttt{tf.data}, transfer learning), MLflow,
+DagsHub, DVC, Docker/Compose, GitHub Actions and Azure documentation.
+
+\yours{Check that this disclosure is accurate and complete before submitting, and adjust it if
+anything differs.}
+
+\section*{How to read this report}
+Each chapter is one task; each section is one sub-task ID from the assignment, and explains
+\emph{what} I did, \emph{why}, \emph{how it works}, and \emph{what went wrong}. Every command is
+explained where it is used. Tables marked as generated were written by the project scripts
+(\file{report/generated/}) so the numbers cannot drift from the actual runs.

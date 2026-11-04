@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Secrets (e.g. DAGSHUB_TOKEN) live in GitHub: Settings -> Secrets and variables -> Actions.
+# They are injected as ${{ secrets.NAME }} at run time and masked in logs; writing them in this
+# file would publish them to everyone who can read the repository and its history.
+
+jobs:
+  test:
+    name: lint + tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-serve.txt -r requirements-tf.txt
+          pip install pytest ruff==0.16.9
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Unit tests
+        run: pytest -v
+
+  postgres:
+    name: tests against PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-serve.txt pytest
+      - name: Web tests on Postgres
+        env:
+          VG_TEST_DATABASE_URL: postgresql+psycopg2://ci:ci@localhost:5432/ci
+        run: pytest -v tests/test_app.py
+
+  docker:
+    name: build + smoke-test images
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Champion model (committed export; tiny dummy only if it is missing)
+        run: |
+          if [ ! -f models/champion.keras ]; then
+            pip install -r requirements-tf.txt pyyaml
+            python tests/make_dummy_model.py
+          fi
+          ls -la models/
+      - uses: docker/setup-buildx-action@v3
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: visionguard-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build model API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: api/Dockerfile
+          load: true
+          tags: visionguard-api:ci
+          cache-from: type=gha
+      - name: Smoke test containers
+        run: |
+          docker run -d --name web -p 5000:8000 -v "$PWD/models:/app/models:ro" \
+            -e DATABASE_URL=sqlite:////tmp/ci.db -e SECRET_KEY=ci visionguard-web:ci
+          docker run -d --name api -p 8080:8080 -e API_KEY=ci-key visionguard-api:ci
+          for i in $(seq 1 30); do curl -fs localhost:5000/health && curl -fs localhost:8080/health && break; sleep 3; done
+          echo; docker exec web whoami
+          test "$(docker exec web whoami)" = "vg"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/v1/predict)
+          test "$code" = "401"
+          docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep visionguard
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs web; docker logs api

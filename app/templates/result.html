@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Result #{{ r.id }}{% endblock %}
+{% block content %}
+{% set is_ai = r.label == 'AI-generated' %}
+{% set pct = (r.confidence * 100) %}
+<section class="card verdict {{ 'ai' if is_ai else 'real' }}">
+  <p class="eyebrow">Verdict for <code>{{ r.filename }}</code></p>
+  <h1>{{ 'Likely AI-generated' if is_ai else 'Likely a real photo' }}</h1>
+  <div class="meter" role="meter" aria-valuenow="{{ '%.0f' % pct }}" aria-valuemin="0" aria-valuemax="100">
+    <div class="meter-fill" style="width: {{ '%.1f' % pct }}%"></div>
+  </div>
+  <p class="conf"><strong>{{ '%.1f' % pct }}%</strong> confidence
+    {% if pct < 65 %}<span class="pill warn">low certainty</span>{% endif %}</p>
+
+  <div class="scale">
+    <span>Real</span>
+    <div class="scale-track">
+      <div class="scale-thr" style="left: {{ r.threshold * 100 }}%" title="decision threshold {{ r.threshold }}"></div>
+      <div class="scale-dot" style="left: {{ r.prob_ai * 100 }}%"></div>
+    </div>
+    <span>AI</span>
+  </div>
+  <p class="muted small">Model output p(AI) = {{ '%.3f' % r.prob_ai }}; images at or above the threshold {{ '%.2f' % r.threshold }} are called AI-generated.</p>
+</section>
+
+<section class="card caveat">
+  <h2>Read this before you rely on it</h2>
+  <ul>
+    <li>This is a statistical guess from one model trained on a small public dataset, not proof. Treat it as one signal among several.</li>
+    <li>It is weakest on screenshots, heavily compressed or resized images, digital paintings and image generators newer than its training data.</li>
+    <li>The threshold was tuned to avoid wrongly accusing real photos, so some AI images will pass as real.</li>
+    <li>Never use this result alone to accuse a person of faking an image.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Audit record</h2>
+  <dl class="kv">
+    <dt>Record id</dt><dd>#{{ r.id }}</dd>
+    <dt>Time (UTC)</dt><dd>{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
+    <dt>Model</dt><dd><code>{{ r.model_name }}</code> version {{ r.model_version }}</dd>
+    <dt>Inference</dt><dd>{{ r.inference_mode }}{% if r.latency_ms %} · {{ '%.0f' % r.latency_ms }} ms{% endif %}</dd>
+    <dt>Image</dt><dd>{{ r.width }}×{{ r.height }} px · {{ r.size_kb }} KB</dd>
+    <dt>SHA-256</dt><dd><code class="hash">{{ r.image_sha256 }}</code></dd>
+  </dl>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('main.index') }}">Analyse another</a>
+    <a class="btn ghost" href="{{ url_for('main.history') }}">View history</a>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,141 @@
+\chapter{Data Understanding and Versioning}\label{ch:data}
+
+\section{Environment}
+\textbf{What and why.} I created an isolated virtual environment so the exact library versions
+of this project cannot clash with other projects on my machine, and so anyone can rebuild the
+same environment from \file{requirements.txt}. Every version is pinned (e.g.\ TensorFlow 2.20.0,
+Keras 3.15.1, MLflow 2.22.5, Keras Tuner 1.4.7, DVC 3.67.1).
+
+\textbf{How.} \cmd{py -3.11 -m venv .venv} creates a private copy of the interpreter and an empty
+\cmd{site-packages}; activating it puts that interpreter first on \texttt{PATH}.
+\cmd{pip install -r requirements.txt} installs the pinned set and \cmd{pip install -e .} installs
+my own package \texttt{visionguard} (in \file{src/}) in editable mode so every script imports the
+same code. \file{scripts/00_env_check.py} prints the user, host, Python, every library version,
+whether the interpreter is inside a virtualenv, and what TensorFlow can see:
+\cmd{tf.config.list_physical_devices("GPU")}. On my laptop TensorFlow sees only the CPU (native
+Windows TensorFlow has no GPU support after 2.10), so the heavy training runs were executed on a
+Colab T4 GPU with the same pinned tracking libraries (\cref{sec:2-0}).
+
+\shot{s1_1_env}{Exact library versions, virtualenv check and GPU visibility (\file{scripts/00_env_check.py}).}
+
+\textbf{Why MLflow 2.x and not 3.x?} MLflow 3 logs models through a new ``logged models'' REST
+API. DagsHub's hosted tracking server implements the MLflow 2 API, so I pinned the client to the
+latest 2.x release to keep \texttt{log\_model} and the Model Registry working against DagsHub.
+
+\section{Dataset audit}
+\textbf{What.} \file{scripts/01_audit.py} walks every file under \file{data/raw} and records, per
+image: class (from the top-level folder name), file size, width, height, colour mode, format, a
+SHA-256 hash of the bytes, whether the file can be fully decoded, and the error if not. The full
+table is saved to \file{reports/audit/audit.csv}; summaries are written straight into this report.
+
+\textbf{How each check works.}
+\begin{itemize}
+\item \emph{Readability}: \texttt{PIL.Image.verify()} catches broken headers and \texttt{load()}
+forces a full pixel decode, which catches truncated files that open fine but fail later.
+I deliberately use the \emph{same} decode function as training and serving
+(\file{src/visionguard/imaging.py}), so ``readable'' in the audit means ``usable by the model''.
+\item \emph{Duplicates}: two files are exact duplicates when their SHA-256 hashes are equal (same
+bytes). I keep the first copy only. Duplicates matter because a copy in the training set and
+another in the test set leaks the answer and inflates test accuracy.
+\item \emph{Label conflicts}: a hash that appears under \emph{both} classes is label noise; all
+copies are dropped.
+\item Images smaller than 32 pixels on a side are flagged as unusable.
+\end{itemize}
+
+\gentable{audit_counts}{Files per class: total, readable, corrupt (cannot be decoded), exact duplicates and too-small images.}
+\gentable{audit_stats}{Minimum, median and maximum of width, height and file size per class (readable files only).}
+\gentable{audit_formats}{Image formats and colour modes per class.}
+
+The dataset has \vgNFiles{} files: \vgNAI{} AI-generated and \vgNReal{} real. \vgNCorrupt{}
+files could not be decoded and \vgNDup{} are exact duplicates (\vgNDupGroups{} duplicate groups,
+\vgNConflicts{} hashes appearing in both classes). After cleaning, \vgNClean{} images remain and
+are split 70/15/15 with stratification (same AI/real ratio in every split), using a fixed seed:
+
+\gentable{splits}{Stratified train / validation / test split after removing corrupt files, duplicates and label conflicts.}
+\gentable{audit_corrupt}{Files that could not be decoded (first 15) and the decoder's error.}
+
+\shot{s1_2_audit}{Terminal output of the audit script.}
+
+\begin{wrongbox}[Problem I had to design around]
+The obvious decoder, \texttt{tf.io.decode\_image}, cannot read WEBP files, CMYK JPEGs or
+palette PNGs with transparency, all of which occur in scraped data. Using it would have marked good
+images as ``corrupt'' and thrown them away, so the audit, training and serving all use one Pillow
+function that converts every image to RGB (compositing transparency onto white so transparent
+pixels do not turn black).
+\end{wrongbox}
+
+\section{Visual EDA}
+\autofig{eda_samples}{Random samples per class (top two rows AI-generated, bottom two rows real), with original size and format.}
+\textbf{Interpretation.} The AI-generated images are mostly polished, centred compositions with
+smooth gradients, glossy lighting and an ``illustration'' look, while the real images include
+everyday clutter, uneven exposure and natural noise. Both classes contain people, animals and
+landscapes, so the model cannot solve the task by topic alone; it has to use style and texture.
+
+\autofig{eda_histograms}{Width, height, file size (log scale) and aspect ratio per class.}
+\textbf{Interpretation.} The median AI image is \vgMedWAI{}$\times$\vgMedHAI{} pixels and
+\vgMedKBAI{}\,KB, versus \vgMedWReal{}$\times$\vgMedHReal{} pixels and \vgMedKBReal{}\,KB for real
+images. \vgSquarePctAI{}\% of AI images are exactly square against \vgSquarePctReal{}\% of real
+ones, because generators output fixed square resolutions. These differences are a
+\emph{shortcut risk}: a network could learn ``square and small file $\Rightarrow$ AI'' instead of
+learning generation artefacts. Resizing every image to the same square input removes the size
+signal from the pixels, but compression strength still differs; I return to this in the error
+analysis (\cref{sec:2-6}).
+
+\yours{After running \file{02_eda.py} on the real data, check that the two paragraphs above still
+match your figures (e.g.\ which class is larger, how strong the square-image peak is) and adjust a
+sentence if not.}
+
+\section{Data version control with DVC}
+\subsection*{Toy exercise}
+\textbf{What and why.} In an empty folder I created a 3-row \file{scores.csv}, versioned it with
+DVC, changed it, travelled back to the old version, and round-tripped it through remote storage
+on DagsHub (repository \texttt{23L-0764\_A2\_Ops-dvc-toy}). Commands, in order
+(\file{labs/dvc_toy.sh}):
+\begin{enumerate}
+\item \cmd{git init}, \cmd{dvc init}: Git tracks code and small text; DVC adds \file{.dvc/}
+(config + local cache) on top of Git.
+\item \cmd{dvc add scores.csv}: moves the content into the content-addressed cache
+\file{.dvc/cache/<md5>} and writes the pointer \file{scores.csv.dvc}; it also adds
+\file{scores.csv} to \file{.gitignore} so Git never stores the data itself. I commit the pointer.
+\item Append two rows, \cmd{dvc add} again, commit: the pointer now holds a different md5.
+\item \cmd{git checkout HEAD~1 -- scores.csv.dvc} restores the old pointer and
+\cmd{dvc checkout} replaces the workspace file with the cached content for that md5: the 3-row
+version is back. Git chooses \emph{which} version; DVC supplies the \emph{bytes}.
+\item \cmd{dvc remote add -d origin s3://dvc} plus \cmd{endpointurl} points DVC at DagsHub's
+S3-compatible storage; the token is set with \cmd{--local}, which writes it to
+\file{.dvc/config.local} (git-ignored) instead of the committed \file{.dvc/config}.
+\item \cmd{dvc push --all-commits} uploads the data for every committed version. I then deleted
+\file{scores.csv} \emph{and} the local cache, and \cmd{dvc pull} downloaded it again.
+\end{enumerate}
+
+\shot{s1_4_toy_pointer}{The pointer file and the two commits (v1, v2).}
+\shot{s1_4_toy_checkout}{Returning to the older version with \cmd{git checkout} + \cmd{dvc checkout}.}
+\shot{s1_4_toy_pushpull}{Push to DagsHub, delete local data and cache, pull it back.}
+\shot{s1_4_toy_dagshub}{The toy repository on DagsHub with the DVC-tracked file.}
+
+\subsection*{What the pointer file holds, and why data does not belong in Git}
+The \file{.dvc} file is a few lines of YAML: the \texttt{md5} of the content (for a directory, the
+md5 of a manifest listing every file and its hash), the total \texttt{size}, the number of files
+and the \texttt{path}. It is a fingerprint, not data. Git is built for small text that changes
+line by line: every version of every file is stored forever in \file{.git}, so committing
+hundreds of megabytes of images makes every clone download all of it, binary diffs are
+meaningless, and GitHub rejects files over 100\,MB. With DVC, Git history stays tiny, and the
+data version is the md5 in the pointer, which I also log to MLflow as the tag
+\texttt{dvc\_data\_version}, so every experiment says exactly which data it used.
+
+\subsection*{Applying it to VisionGuard}
+\cmd{dvc add data/raw} tracks the whole dataset directory as one unit (\file{data/raw.dvc}),
+with DagsHub storage of the \texttt{23L-0764\_A2\_Ops} repository as the default remote. The
+split lists (\file{data/splits/*.csv}, a few KB) are committed to Git directly, because they
+are small text and must change together with the code that produced them.
+
+\shot{s1_4_dataset_dvc}{\cmd{dvc add data/raw}, commit of the pointer, and \cmd{dvc push} of the dataset.}
+\shot{s1_4_dagshub_data}{DagsHub repository page showing \file{data/raw} tracked by DVC.}
+
+\begin{wrongbox}[Problems to watch for]
+A plain \cmd{dvc push} uploads only the data of the \emph{current} commit, so after deleting the
+cache an older version could not be restored from the remote; \cmd{dvc push --all-commits}
+uploads every version referenced in Git history. The second trap is credentials:
+\cmd{dvc remote modify} without \cmd{--local} writes the token into \file{.dvc/config}, which is
+committed, so the token would be published.
+\end{wrongbox}

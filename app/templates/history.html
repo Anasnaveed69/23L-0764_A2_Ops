@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+<section class="section-head page-head">
+  <div>
+    <p class="eyebrow">Database trail</p>
+    <h1>Prediction history</h1>
+  </div>
+  <div class="stats">
+    {% set ai = stats.by_label.get('AI-generated', {}) %}{% set re = stats.by_label.get('Real', {}) %}
+    <div><b>{{ ai.get('count', 0) }}</b><span>AI-generated</span></div>
+    <div><b>{{ re.get('count', 0) }}</b><span>Real</span></div>
+    <div><b>{{ stats.rejected }}</b><span>Rejected</span></div>
+  </div>
+</section>
+
+<form class="filters" method="get">
+  <a class="chip {{ 'on' if not label }}" href="{{ url_for('main.history', all='1' if include_rejected else None) }}">All verdicts</a>
+  <a class="chip {{ 'on' if label == 'AI-generated' }}" href="{{ url_for('main.history', label='AI-generated') }}">AI-generated</a>
+  <a class="chip {{ 'on' if label == 'Real' }}" href="{{ url_for('main.history', label='Real') }}">Real</a>
+  <a class="chip {{ 'on' if include_rejected }}" href="{{ url_for('main.history', all=None if include_rejected else '1') }}">{{ 'Hide' if include_rejected else 'Show' }} rejected uploads</a>
+  <span class="muted">{{ total }} record{{ '' if total == 1 else 's' }}</span>
+</form>
+
+<div class="card table-card">
+{% if rows %}
+<table class="history">
+  <thead><tr><th>#</th><th>When (UTC)</th><th>File</th><th>Decision</th><th>Confidence</th><th>p(AI)</th><th>Model</th><th>Mode</th><th>Latency</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr class="{{ 'rejected' if r.status != 'ok' }}">
+    <td>{% if r.status == 'ok' %}<a href="{{ url_for('main.result', rec_id=r.id) }}">{{ r.id }}</a>{% else %}{{ r.id }}{% endif %}</td>
+    <td class="nowrap">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+    <td class="truncate" title="{{ r.filename }}">{{ r.filename }}</td>
+    <td>{% if r.status == 'ok' %}<span class="pill {{ 'ai' if r.label == 'AI-generated' else 'real' }}">{{ r.label }}</span>{% else %}<span class="pill warn" title="{{ r.error }}">{{ r.status }}: {{ r.error }}</span>{% endif %}</td>
+    <td class="nowrap">{% if r.confidence is not none %}<div class="minibar"><div style="width: {{ r.confidence * 100 }}%"></div></div>{{ '%.1f' % (r.confidence * 100) }}%{% else %}–{% endif %}</td>
+    <td>{{ '%.3f' % r.prob_ai if r.prob_ai is not none else '–' }}</td>
+    <td class="nowrap">{{ r.model_name or '–' }} {% if r.model_version %}v{{ r.model_version }}{% endif %}</td>
+    <td>{{ r.inference_mode }}</td>
+    <td>{{ '%.0f ms' % r.latency_ms if r.latency_ms else '–' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No records yet. <a href="{{ url_for('main.index') }}">Analyse your first image.</a></p>
+{% endif %}
+</div>
+
+{% if pages > 1 %}
+<nav class="pager">
+  {% if page > 1 %}<a class="btn ghost" href="{{ url_for('main.history', page=page-1, label=label, all='1' if include_rejected else None) }}">← Newer</a>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost" href="{{ url_for('main.history', page=page+1, label=label, all='1' if include_rejected else None) }}">Older →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+# Keep the build context small and secrets out of every image layer.
+.git
+.github
+.env
+.env.*
+!.env.example
+.dvc/cache
+.dvc/tmp
+data/
+mlruns/
+mlruns_toy/
+mlartifacts/
+outputs/
+tuner_runs/
+reports/
+report/
+labs/
+notebooks/
+tests/
+docs/
+**/__pycache__
+**/*.pyc
+.venv
+venv
+*.db
+# models/ is needed by api/Dockerfile only (champion.keras + .json)
+models/*
+!models/champion.keras
+!models/champion.json

@@ -1,0 +1,159 @@
+\chapter{Experiment Tracking with MLflow and DagsHub}\label{ch:tracking}
+
+\section{Tool lab: MLflow locally}
+\file{labs/mlflow_toy.py} trains a one-hidden-layer network on 10\,000 Fashion-MNIST images and
+logs: parameters (\texttt{lr}, \texttt{epochs}, \texttt{units}, \texttt{optimizer}), per-epoch
+metrics through a small Keras callback (\texttt{mlflow.log\_metrics(..., step=epoch)}), a loss
+plot (\texttt{mlflow.log\_figure}) and the model (\texttt{mlflow.tensorflow.log\_model}). I ran it
+with \texttt{lr=0.001} and \texttt{lr=0.01} against a local store (\cmd{--local} writes to
+\file{./mlruns_toy}) and opened \cmd{mlflow ui --backend-store-uri ./mlruns_toy}. In the
+comparison view the two \texttt{val\_accuracy} curves can be overlaid and the parameter that
+differs is highlighted.
+
+\shot{s3_1_mlflow_runs}{Local MLflow UI: the toy experiment with both runs.}
+\shot{s3_1_mlflow_compare}{Comparison of the two learning rates.}
+
+\textbf{Definitions in my own words.}
+\begin{description}[leftmargin=2.2cm,style=nextline]
+\item[Experiment] A named folder of runs that try to solve the same problem, so they can be
+compared side by side (here \texttt{VisionGuard} and \texttt{toy-fashion-mnist}).
+\item[Run] One execution of training code, with a unique id, start/end time and status;
+everything logged during it belongs to it.
+\item[Parameter] An input setting that is fixed for the run and written once, e.g.\ the learning
+rate. Parameters are immutable: logging a different value for the same key is an error.
+\item[Metric] A numeric result that may be logged many times with a step, e.g.\
+\texttt{val\_loss} per epoch, which is how MLflow draws curves.
+\item[Artifact] Any output file stored with the run: plots, CSVs, the requirements list, the
+model itself.
+\item[Tag] Free-form key/value metadata describing the run rather than configuring it, e.g.\ the
+git commit, the data version or who ran it; tags can be changed later and are used for search.
+\end{description}
+
+\section{DagsHub setup}
+The DagsHub project \texttt{23L-0764\_A2\_Ops} was created with \emph{Connect a repository}, so it
+mirrors my GitHub repository and adds DVC storage and a hosted MLflow server. Its tracking
+address is \url{\MLflowURL}. The code never contains it: \file{tracking.py} calls
+\texttt{load\_dotenv()} and reads \texttt{MLFLOW\_TRACKING\_URI}; MLflow itself reads
+\texttt{MLFLOW\_TRACKING\_USERNAME} and \texttt{MLFLOW\_TRACKING\_PASSWORD} (the DagsHub token)
+from the environment. Those live in \file{.env}, which is listed in \file{.gitignore} and
+\file{.dockerignore}; \file{.env.example} documents the variable names with dummy values.
+If \texttt{MLFLOW\_TRACKING\_URI} is missing the code falls back to a local \file{mlruns/} folder,
+so nothing breaks offline.
+
+\shot{s3_2_dagshub_project}{The DagsHub project connected to GitHub.}
+\shot{s3_2_dagshub_toy_run}{The toy run logged to DagsHub's MLflow server.}
+\shot{s3_2_gitignore}{Proof that \file{.env} is git-ignored: \cmd{git check-ignore -v .env} names the rule and \cmd{git status} does not list it.}
+
+\section{Instrumenting VisionGuard training}
+Every run of \file{scripts/train.py} logs:
+\begin{itemize}
+\item \textbf{Parameters}: every value of \file{params.yaml} actually used (flattened, e.g.\
+\texttt{train.lr\_head}), plus split sizes and class weights.
+\item \textbf{Per-epoch metrics}: loss, accuracy, AUC, precision, recall for train and
+validation, and the learning rate (so ReduceLROnPlateau is visible).
+\item \textbf{Final metrics}: \texttt{best\_epoch}, the chosen \texttt{val\_threshold}, all
+validation and test metrics at that threshold (\texttt{test\_accuracy}, \texttt{test\_f1},
+\texttt{test\_roc\_auc}, \texttt{test\_false\_positive\_rate}, confusion-matrix cells) and test
+accuracy/F1 at the naive 0.5 threshold for comparison.
+\item \textbf{Tags}: \texttt{git\_commit}, \texttt{git\_dirty}, \texttt{dvc\_data\_version}
+(the md5 from \file{data/raw.dvc}), \texttt{seed}, Python/TensorFlow/Keras versions, platform,
+model type, backbone and tracking mode.
+\end{itemize}
+
+\textbf{Manual approach} (\cmd{--tracking manual}, e.g.\ run \texttt{mnv2\_default}): my callback
+\texttt{MLflowEpochLogger} sends \texttt{logs} to \texttt{mlflow.log\_metrics} at the end of every
+epoch with a global step, so the two training stages form one continuous curve.
+
+\textbf{Autologging} (\cmd{--tracking autolog}, run \texttt{mnv2\_autolog}):
+\texttt{mlflow.tensorflow.autolog()} patches \texttt{model.fit()}.
+
+\begin{table}[H]\centering\small
+\begin{tabularx}{\linewidth}{>{\bfseries}l X X}
+\toprule
+ & Manual callback & Autologging \\
+\midrule
+Captures & exactly what I choose: per-epoch metrics + LR, my params, my tags & every \texttt{fit()} argument (epochs, batch size, class weight\ldots), all optimizer settings (\texttt{opt\_*}), per-epoch metrics, model summary, EarlyStopping info, with no code \\
+Misses & anything I forget to log & test metrics, chosen threshold, git/DVC tags, the confusion matrix, data splits: it only sees \texttt{fit()}, not evaluation or provenance \\
+Multi-stage training & one continuous run & a second \texttt{fit()} tries to re-log \texttt{epochs} with a new value and params are immutable, so I put stage 2 in a nested child run \\
+Noise & concise & many parameters irrelevant to the experiment \\
+\bottomrule
+\end{tabularx}
+\caption{Manual logging versus autologging.}\end{table}
+
+In practice the two complement each other: autolog for the training internals, explicit logging
+for provenance and evaluation. Both kinds of run were produced from the same configuration.
+
+\shot{s3_3_manual_run}{Manual run: parameters, metric curves and provenance tags.}
+\shot{s3_3_autolog_run}{Autologged run: the automatically captured \texttt{fit()} and optimizer parameters.}
+
+\begin{wrongbox}
+(1) My first metric name \texttt{test@0.5\_accuracy} was rejected: MLflow metric names may only
+contain letters, digits, \texttt{\_ - . / :} and spaces; renamed to \texttt{test\_t0.5\_accuracy}.
+(2) The first autolog run logged \emph{no} epoch metrics: autolog tried to log
+\texttt{class\_weight}, which I had already logged under the same key with a different string
+format, and since parameters are immutable the autolog hook aborted. I renamed my parameter to
+\texttt{class\_weights} and moved the second \texttt{fit()} into a nested run.
+\end{wrongbox}
+
+\section{Artifacts}
+Each run stores: \file{plots/} (training curves, confusion matrix, ROC curve),
+\file{splits/} (the exact train/val/test CSVs used), \file{environment/}
+(\file{requirements-freeze.txt} from \cmd{pip freeze} and \file{params.yaml}),
+\file{evaluation/test_predictions.csv}, \file{model_info/} (model summary, trainable layers per
+stage), \file{keras_model/} (the \file{model.keras} file and \file{model_meta.json} with image
+size, resize mode and threshold) and \file{model/} (the MLflow TensorFlow-flavour model with an
+input/output signature, used by the registry).
+
+\shot{s3_4_artifacts}{Artifacts tab of the champion run.}
+
+\section{Experiment comparison}\label{sec:3-5}
+\file{scripts/run_experiments.py} launches the reference run and variants that each change
+\emph{one} thing relative to it, so differences can be attributed to that change.
+\file{scripts/compare_runs.py} queries all finished runs from MLflow and builds the table and chart.
+
+\gentable{runs}{All VisionGuard runs (sorted by validation ROC-AUC).}
+\autofig{runs_comparison}{Validation ROC-AUC and test F1 per run.}
+\shot{s3_5_compare}{MLflow/DagsHub run comparison view.}
+
+\textbf{Selection rule.} I choose by \textbf{validation ROC-AUC} (threshold-free: it measures
+how well the model ranks AI above real, before any threshold), breaking ties by validation
+false-positive rate because false accusations are the costly error. Test metrics are shown but
+never used to choose, otherwise the test set would become a second validation set.
+\textbf{Chosen: \texttt{\vgBestRun}} (validation AUC \vgBestValAuc, test AUC \vgBestTestAuc,
+test accuracy \vgBestTestAcc, test F1 \vgBestTestFone).
+
+\yours{Two or three sentences interpreting the table: which change helped or hurt most (e.g.\
+augmentation off, image size 160, no fine-tuning), and whether the autolog run matches the manual
+reference run (it should, same configuration).}
+
+\begin{wrongbox}
+My first comparison ranked runs by the metric \texttt{val\_auc}, which is the Keras AUC of the
+\emph{last} epoch logged by the callback, not of the best checkpoint that is actually evaluated.
+It also did not exist in autologged runs under the same meaning. I switched to
+\texttt{val\_roc\_auc}, computed by my evaluation code on the reloaded best model for every run.
+\end{wrongbox}
+
+\section{Model registry}
+\file{scripts/register_model.py} makes sure the registered model \texttt{VisionGuard-23L-0764}
+has at least two versions (the reference transfer run and the baseline CNN are registered at
+training time with \cmd{--register}; the selected run is registered if it is not already),
+gives the best version the alias \texttt{champion} and the runner-up the alias
+\texttt{challenger}, and writes a description and a \texttt{val\_auc} tag. An alias is a movable
+name: promoting a new model means moving the alias, and every consumer that loads
+\texttt{@champion} follows it without code changes.
+
+\gentable{registry}{Registered versions and aliases.}
+\shot{s3_6_registry}{Model registry on DagsHub with two versions and the \texttt{champion} alias.}
+
+\file{scripts/load_champion.py} is a separate script that resolves the alias with
+\texttt{MlflowClient().get\_model\_version\_by\_alias()}, loads that version with
+\texttt{mlflow.tensorflow.load\_model("models:/VisionGuard-23L-0764/<v>")}, reads the threshold
+and image size from the version's \file{model_meta.json}, and classifies one image.
+
+\shot{s3_6_load_alias}{Loading the model by alias and classifying one image.}
+
+\textbf{How the champion reaches the server.} The serving processes must not call DagsHub per
+request. \file{scripts/export_champion.py} resolves \texttt{@champion} \emph{once}, downloads
+\file{model.keras} and writes \file{models/champion.keras} plus \file{champion.json} (version,
+threshold, image size). Locally that folder is mounted read-only into the web container; for the
+cloud API the file is copied into the image at build time (\cref{ch:docker,ch:deploy}).

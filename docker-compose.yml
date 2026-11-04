@@ -1,0 +1,70 @@
+# VisionGuard local stack:  docker compose up -d --build   ->  http://localhost:5000
+# Secrets come from .env (git-ignored). Copy .env.example to .env first.
+name: visionguard
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-visionguard}
+      POSTGRES_USER: ${POSTGRES_USER:-visionguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data      # named volume: data survives `docker compose down`
+    # NO "ports:" section -> the database is reachable only on the internal Compose network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [backend]
+
+  web:
+    build:
+      context: .
+      args:
+        WITH_TF: ${WITH_TF:-true}
+    image: visionguard-web:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy           # start only after pg_isready succeeds
+    environment:
+      # "db" is the service name: Compose's internal DNS resolves it to the database container
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-visionguard}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-visionguard}
+      INFERENCE_MODE: ${INFERENCE_MODE:-local}
+      MODEL_PATH: /app/models/champion.keras
+      THRESHOLD: ${THRESHOLD:-}
+      MODEL_API_URL: ${MODEL_API_URL:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
+      FLASK_DEBUG: "0"
+    volumes:
+      - ./models:/app/models:ro               # champion model mounted read-only
+    ports:
+      - "5000:8000"
+    networks: [backend]
+
+  # Optional: run the cloud model API locally to test it before deploying.
+  #   docker compose --profile api up -d --build api   ->  http://localhost:8080/health
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: visionguard-api:latest
+    environment:
+      API_KEY: ${MODEL_API_KEY:?set MODEL_API_KEY in .env}
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    networks: [backend]
+
+volumes:
+  pgdata:
+
+networks:
+  backend:

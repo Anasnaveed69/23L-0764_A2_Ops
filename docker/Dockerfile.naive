@@ -1,0 +1,12 @@
+# Task 6.4 "BEFORE" image — deliberately unoptimised, only for the size comparison.
+#   docker build -f docker/Dockerfile.naive -t visionguard-web:naive .
+# Problems: full (non-slim) base with compilers, GPU TensorFlow wheel + CUDA libraries, pip cache
+# kept in the layer, source copied before installing (any code edit re-installs everything),
+# runs as root. (.dockerignore still applies because it belongs to the build context; to see its
+# effect too, build once with `mv .dockerignore .dockerignore.off`.)
+FROM python:3.11
+WORKDIR /app
+COPY . .
+RUN pip install tensorflow==2.20.0 -r requirements-serve.txt
+ENV PYTHONPATH=/app/src
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app.wsgi:app"]

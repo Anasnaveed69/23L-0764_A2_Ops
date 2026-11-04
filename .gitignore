@@ -1,0 +1,43 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# data is versioned by DVC, not Git (data/raw.dvc is the pointer that IS committed)
+/data/raw
+/data/*.zip
+
+# generated / heavy
+mlruns/
+mlruns_toy/
+mlartifacts/
+outputs/
+tuner_runs/
+models/*.keras
+# the exported champion (~9 MB, inference-only) IS committed: CI and the cloud VM build the
+# API image from it without registry credentials. Source of truth stays the MLflow registry.
+!models/champion.keras
+reports/audit/
+*.db
+
+# python / editors
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# LaTeX build files
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.lof
+report/*.lot
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
