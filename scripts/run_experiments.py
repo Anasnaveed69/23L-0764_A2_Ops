@@ -23,6 +23,8 @@ RUNS = {
     "mnv2_frozen":    (["train.unfreeze=none"], []),                     # frozen layers
     "mnv2_img160":    (["image.size=160"], []),                          # image size
     "effb0_default":  (["train.backbone=efficientnetb0"], []),           # backbone
+    # Keras Tuner's best trial (Task 2.7) retrained in full with the normal schedule
+    "mnv2_tuned":     (["train.lr_head=0.0022", "train.dropout=0.1", "train.unfreeze=60"], []),
     # same config as mnv2_default but tracked by MLflow autologging (Task 3.3)
     "mnv2_autolog":   ([], ["--tracking", "autolog"]),
 }

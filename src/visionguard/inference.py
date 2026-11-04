@@ -23,7 +23,7 @@ log = logging.getLogger("visionguard.inference")
 @dataclass
 class Prediction:
     label: str            # "AI-generated" | "Real"
-    confidence: float     # probability of the predicted label, 0..1
+    confidence: float     # decision confidence 0.5..1 (see decision_confidence)
     prob_ai: float        # raw sigmoid output
     threshold: float
     model_name: str
@@ -32,6 +32,17 @@ class Prediction:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def decision_confidence(p_ai: float, threshold: float) -> float:
+    """How far the score is from the decision threshold, mapped to 0.5 (on the threshold) .. 1.0
+    (at 0 or 1). With a threshold of 0.5 this equals the probability of the predicted label; with
+    the validation-chosen threshold (e.g. 0.78) it avoids the contradiction of showing
+    "Real, 24% confidence" for p(AI)=0.76."""
+    t = min(max(threshold, 1e-6), 1 - 1e-6)
+    if p_ai >= t:
+        return 0.5 + 0.5 * (p_ai - t) / (1 - t)
+    return 0.5 + 0.5 * (t - p_ai) / t
 
 
 class Predictor:
@@ -67,7 +78,7 @@ class Predictor:
         is_ai = p >= self.threshold
         return Prediction(
             label="AI-generated" if is_ai else "Real",
-            confidence=round(p if is_ai else 1 - p, 4),
+            confidence=round(decision_confidence(p, self.threshold), 4),
             prob_ai=round(p, 4),
             threshold=self.threshold,
             model_name=self.model_name,

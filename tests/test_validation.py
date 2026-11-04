@@ -67,3 +67,12 @@ def test_pad_keeps_aspect():
 def test_open_image_rejects_garbage():
     with pytest.raises(ImageDecodeError):
         open_image(b"GIF89a" + b"\x00" * 10)
+
+
+def test_decision_confidence():
+    from visionguard.inference import decision_confidence
+
+    assert decision_confidence(0.5, 0.5) == 0.5
+    assert abs(decision_confidence(0.9, 0.5) - 0.9) < 1e-9      # equals p(label) at t=0.5
+    assert decision_confidence(0.76, 0.78) < 0.55               # just below t -> barely "Real"
+    assert decision_confidence(0.0, 0.78) == 1.0 and decision_confidence(1.0, 0.78) == 1.0

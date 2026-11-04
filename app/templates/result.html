@@ -20,7 +20,7 @@
     </div>
     <span>AI</span>
   </div>
-  <p class="muted small">Model output p(AI) = {{ '%.3f' % r.prob_ai }}; images at or above the threshold {{ '%.2f' % r.threshold }} are called AI-generated.</p>
+  <p class="muted small">Model output p(AI) = {{ '%.3f' % r.prob_ai }}; images at or above the threshold {{ '%.2f' % r.threshold }} are called AI-generated. Confidence is the distance from that threshold: 50% means right on it, 100% means p(AI) is 0 or 1.</p>
 </section>
 
 <section class="card caveat">

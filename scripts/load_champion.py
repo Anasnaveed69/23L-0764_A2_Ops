@@ -17,6 +17,7 @@ from mlflow.tracking import MlflowClient  # noqa: E402
 from champion_utils import version_by_alias  # noqa: E402
 from visionguard.config import load_params  # noqa: E402
 from visionguard.imaging import decode_and_resize  # noqa: E402
+from visionguard.inference import decision_confidence  # noqa: E402
 from visionguard.tracking import setup_mlflow  # noqa: E402
 
 
@@ -40,7 +41,7 @@ def main():
     x = decode_and_resize(Path(args.image).read_bytes(), meta["image_size"], meta["resize_mode"])
     p = float(model.predict(x[None, ...], verbose=0)[0][0])
     label = "AI-generated" if p >= meta["threshold"] else "Real"
-    conf = p if label == "AI-generated" else 1 - p
+    conf = decision_confidence(p, meta["threshold"])
     print(f"\nimage      : {args.image}\np(AI)      : {p:.4f}\nthreshold  : {meta['threshold']:.2f}"
           f"\nprediction : {label} (confidence {conf:.1%})")
 

@@ -24,7 +24,8 @@ CHANGE = {"mnv2_default": "reference (MobileNetV2, lr 1e-3, aug, 224, last block
           "baseline_cnn": "model: CNN from scratch", "mnv2_lr_1e-4": "head lr 1e-3 -> 1e-4",
           "mnv2_no_aug": "augmentation off", "mnv2_frozen": "no fine-tuning (all frozen)",
           "mnv2_img160": "image size 224 -> 160", "effb0_default": "backbone -> EfficientNetB0",
-          "mnv2_autolog": "same as reference, autolog tracking"}
+          "mnv2_autolog": "same as reference, autolog tracking",
+          "mnv2_tuned": "tuner's best: lr 2.2e-3, dropout 0.1, 60 layers unfrozen"}
 
 
 def main():
