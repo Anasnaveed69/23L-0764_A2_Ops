@@ -41,3 +41,4 @@ report/*.lot
 report/*.fls
 report/*.fdb_latexmk
 report/*.synctex.gz
+report/main.pdf
