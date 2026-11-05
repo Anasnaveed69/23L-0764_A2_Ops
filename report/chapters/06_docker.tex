@@ -1,5 +1,11 @@
 \chapter{Containerization with Docker and Docker Compose}\label{ch:docker}
 
+\textbf{Where this ran.} All Docker work in this chapter was done on the project's Ubuntu 24.04
+VM (\texttt{vm-23L-0764-A2-Ops}, Docker Engine 29.9, Compose v5.7) over SSH from Azure Cloud
+Shell; every screenshot shows the \texttt{azureuser@vm-23L-0764-A2-Ops} prompt with date and time.
+The same files work unchanged with Docker Desktop on Windows. GitHub Actions additionally builds
+and smoke-tests both images on every push (\cref{sec:6-6}).
+
 \section{Docker warm-up}
 Before containerising my project I practised with the ready-made \texttt{nginx:1.27-alpine}
 image (\file{labs/docker_warmup.md}):
@@ -147,7 +153,7 @@ and the history is intact.
 \shot{s6_5_failure_logs}{Log excerpt of the failure.}
 \shot{s6_5_fixed}{After the fix: both services healthy.}
 
-\section{Tool lab: GitHub Actions (CI)}
+\section{Tool lab: GitHub Actions (CI)}\label{sec:6-6}
 \textbf{Toy part.} In the throwaway repository \texttt{ci-toy-23L-0764}
 (\file{labs/ci_toy/}) a workflow runs on every push with a \textbf{matrix} of Python 3.11 and
 3.12, so the same job runs twice in parallel, once per version. I changed an assertion to a wrong
