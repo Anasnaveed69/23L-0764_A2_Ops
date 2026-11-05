@@ -5,7 +5,7 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    {"key": "base_url", "value": "https://YOUR-IP.sslip.io"},
+    {"key": "base_url", "value": "https://20-219-10-43.sslip.io"},
     {"key": "api_key", "value": "PASTE-API-KEY"}
   ],
   "item": [
