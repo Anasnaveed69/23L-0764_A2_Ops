@@ -20,11 +20,20 @@ or answers with an error, the user gets a friendly 503 page and the attempt is s
 \texttt{status = error}.
 
 \shot{s8_health_remote}{Web app health in remote mode: model backend = the cloud API.}
-\shot{s8_result_1}{Upload 1 through the UI, answered by the cloud model.}
-\shot{s8_result_2}{Upload 2.}
-\shot{s8_result_3}{Upload 3.}
+\shot{s8_result_1}{Upload of \texttt{real\_1.jpg} through the UI, answered by the cloud model (record \#5, 230\,ms).}
+\shot{s8_result_2}{Upload of \texttt{ai\_2.jpg}: an AI image that the model misses ($p(\text{AI})=0.28<0.62$).}
 \shot{s8_history}{History menu: the database log, with \texttt{mode = remote} rows.}
 \shot{s8_vm_logs}{The same requests arriving in the API logs on the Azure VM.}
 
-\yours{Summarise the multi-input test: e.g.\ ``of 8 test images, 7 were classified correctly; the
-error was a heavily compressed real portrait, consistent with the error analysis in Section 2.6''.}
+\textbf{Multi-input test.} I uploaded six held-out test images from my laptop through the UI
+(three AI-generated, three real). All six were answered by the cloud model (version 8) and logged
+with \texttt{mode = remote}. All three real photos were classified correctly with high
+confidence ($p(\text{AI})$ 0.004, 0.005 and 0.32), and one of the three AI images was caught
+($p(\text{AI}) = 0.69$, just above the 0.62 threshold). The other two AI images (0.28 and 0.23) were
+called real, so 4 of 6 were correct. This matches the operating point I chose on purpose in
+\cref{sec:2-5}: the threshold favours precision (no real photo was accused) at the cost of
+recall on the AI class (test recall 0.66), and the two misses are photorealistic renders, the
+same error type as in \cref{sec:2-6}. The API logs show about 70\,ms of model time per image on the
+VM, while the round trip seen by the web app (Lahore $\rightarrow$ Central India over HTTPS) was
+197--416\,ms. The earlier rejected uploads (415, 422) never reached the API, because validation
+happens locally first.
