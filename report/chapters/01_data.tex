@@ -69,10 +69,13 @@ pixels do not turn black).
 
 \section{Visual EDA}
 \autofig{eda_samples}{Random samples per class (top two rows AI-generated, bottom two rows real), with original size and format.}
-\textbf{Interpretation.} The AI-generated images are mostly polished, centred compositions with
-smooth gradients, glossy lighting and an ``illustration'' look, while the real images include
-everyday clutter, uneven exposure and natural noise. Both classes contain people, animals and
-landscapes, so the model cannot solve the task by topic alone; it has to use style and texture.
+\textbf{Interpretation.} The AI-generated images are mostly fantasy and ``digital art''
+compositions: saturated colours, glossy lighting, psychedelic patterns, impossible scenes (a cow
+under a UFO) and several collages of many small images. The ``real'' class is \emph{not} only
+camera photographs: it is mainly professional stock photography and studio portraits, but it also
+contains classical paintings (a Vermeer portrait) and flat cartoon clip-art. So ``real'' here
+means ``made without a generator'', and both classes contain people, animals and landscapes; the
+model cannot solve the task by topic alone and has to use style and texture.
 
 \autofig{eda_histograms}{Width, height, file size (log scale) and aspect ratio per class.}
 \textbf{Interpretation.} The median AI image is \vgMedWAI{}$\times$\vgMedHAI{} pixels and
@@ -84,9 +87,9 @@ learning generation artefacts. Resizing every image to the same square input rem
 signal from the pixels, but compression strength still differs; I return to this in the error
 analysis (\cref{sec:2-6}).
 
-\yours{After running \file{02_eda.py} on the real data, check that the two paragraphs above still
-match your figures (e.g.\ which class is larger, how strong the square-image peak is) and adjust a
-sentence if not.}
+\textbf{Check against the figures.} The histograms confirm the direction of the size gap: AI images
+are larger (median 1033$\times$800, 195\,KB vs 940$\times$720, 141\,KB), and the square-image
+peak is clear but not dominant (23\,\% vs 9\,\%), so size alone could not separate the classes.
 
 \section{Data version control with DVC}
 \subsection*{Toy exercise}

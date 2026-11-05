@@ -134,8 +134,18 @@ model \textbf{epoch \vgTransferBestEpoch} (counted across both stages).
 \autofig{baseline_curves}{Baseline CNN: loss and accuracy, best epoch marked in red.}
 \autofig{transfer_curves}{Transfer model, both stages: best epoch in red, start of fine-tuning dotted.}
 
-\yours{Describe what the curves show, e.g.\ whether validation loss flattened before training
-loss (over-fitting) and whether stage 2 lowered validation loss further.}
+\textbf{What the curves show.} \emph{Baseline:} the training loss drops quickly to about 0.62 and
+then stays flat, so the small CNN under-fits rather than over-fits. For the first 13 epochs the
+validation accuracy is stuck at 0.45, the fraction of real images, i.e.\ it predicts ``real''
+for everything, and the validation loss even rises up to epoch 8: the BatchNorm running
+statistics used at validation time are still far from the training-batch statistics. Once they
+settle, the validation loss falls steadily to its minimum at epoch 38. This is why the baseline
+needed the lower learning rate and the warm-up before early stopping (\cref{ch:tracking} box).
+\emph{Transfer:} the validation loss reaches about 0.53 within 5 epochs of the frozen stage and then
+oscillates, while the training loss keeps falling to 0.37, so the widening gap is over-fitting on
+${\sim}$680 training images. Fine-tuning (dotted line) gave one more small improvement (best
+epoch 13, the first fine-tuning epoch) and then stopped helping, so early stopping ended the run
+4 epochs later and the best weights were restored.
 
 \section{Evaluation}\label{sec:2-5}
 \textbf{Which error is worse?} A \emph{false positive} (a real photo called AI-generated) is
@@ -175,8 +185,12 @@ The transfer model reaches test accuracy \vgTransferAccuracy{}, F1 \vgTransferFO
 baseline reaches \vgBaselineAccuracy{}, \vgBaselineFOne{} and \vgBaselineRocauc{} (FPR
 \vgBaselineFalsepositiverate{}).
 
-\yours{One or two sentences: which model is better and by how much; is the gap mainly in AUC (ranking)
-or at the threshold? Pre-trained features usually win clearly on a dataset this small.}
+\textbf{Comparison.} With the reference settings the transfer model is only slightly better than the
+CNN trained from scratch (AUC 0.754 vs 0.743, F1 0.676 vs 0.598); most of the gain is in recall
+at the chosen threshold (0.60 vs 0.48), while the baseline is more conservative (lower FPR,
+0.14 vs 0.21). The pre-trained features pay off once the transfer settings are tuned: the final
+champion \texttt{mnv2\_tuned} (same architecture, tuner's learning rate, dropout and 60 unfrozen
+layers) reaches test AUC 0.844, accuracy 0.733 and F1 0.731 (\cref{sec:3-5}).
 
 \section{Error analysis}\label{sec:2-6}
 \file{scripts/error_analysis.py} takes the champion's test predictions, keeps the ten most
@@ -187,9 +201,18 @@ format. These give each error a testable hypothesis instead of a guess.
 \autofig{errors_grid}{The ten most confident test errors (true label, prediction, $p(\text{AI})$, size).}
 \gentable{errors}{Measured cues and hypothesis per error.}
 
-\yours{Look at each of the 10 images and confirm or correct its hypothesis (e.g.\ watermark,
-painting style, text in the image, heavy JPEG artefacts, a real photo of a CGI scene). Note any
-pattern, e.g.\ ``most false positives are smooth, studio-lit portraits''.}
+\textbf{Checking the hypotheses by eye.} The measured cues are only partly right; looking at the
+images shows a clearer pattern. \emph{False positives} (\#2, \#6, \#7, real $\to$ AI) are
+painted or illustrated ``real'' art: a richly coloured painted portrait, a 17th-century oil
+portrait and a flat vector illustration. The model has effectively learned ``painterly,
+saturated $\Rightarrow$ AI'', which is mostly true in the training data but not always. \#3 is a
+glossy, over-lit stock photo of smiling people, which looks like generator output. \emph{False
+negatives} (AI $\to$ real) are photorealistic: \#1 (cows with a robot in a real-looking barn),
+\#5 (a photographic face with a cartoon pasted in) and \#4 (a side-by-side composite of a
+painting and a press photo); \#8 has large text overlaid on the picture, and \#9/\#10 are
+landscapes whose style is close to real landscape paintings. Two errors (\#4, \#9) are extreme
+aspect ratios squashed to a square. So the main weakness is the label definition itself: style
+(painting vs photo) is confounded with origin (generator vs human).
 
 \section{Tool lab: Keras Tuner}
 \subsection*{Toy part}
@@ -217,8 +240,11 @@ Best trial: learning rate \vgTunerBestLr, dropout \vgTunerBestDrop, \vgTunerBest
 unfrozen layers (validation loss \vgTunerBestLoss). The hyper-parameter with the largest effect
 was \textbf{\vgTunerMostImportant}.
 
-\yours{One sentence on why that hyper-parameter mattered most (e.g.\ the learning rate controls
-whether the new head converges in a few epochs; unfreezing many layers on ~600 images over-fits).}
+\textbf{Why.} How much of the backbone is unfrozen decides how far the ImageNet features can adapt
+to generator artefacts (which ImageNet never had to detect): with 0 layers the network can only
+re-weight generic object features, while 60 layers with a small learning rate let the mid-level
+texture filters change; it also has the largest effect on over-fitting, which is why its levels
+differ most in validation loss.
 
 \textbf{Why the best validation score can over-fit the validation set.} The tuner looks at the
 validation loss of every trial and keeps the minimum. With many trials, some configurations score
@@ -233,6 +259,11 @@ Grad-CAM takes the gradient of the output with respect to the last convolutional
 averages it per channel to get channel weights, and shows the weighted sum of the feature maps as
 a heat map.
 
-\yours{Comment on what the model looks at, e.g.\ skin/hair texture and backgrounds for AI
-portraits (where generators leave smooth, repetitive texture), versus edges of objects or
-watermark areas in the errors.}
+\textbf{What the model looks at.} For the correct AI predictions the heat map covers the dense,
+swirling decorative texture (the ornamental ``G'' and the psychedelic face), i.e.\ the
+high-frequency patterns generators produce. For real images it focuses on a small region
+(the tortoise's shell, beside the Mona Lisa's face) and $p(\text{AI})$ stays below 0.5. In the
+errors the focus is on the colourful headscarf and flowers (painted portrait $\to$ AI), the bright
+faces of the stock photo, and on only the left, painted half of the composite (AI $\to$ real),
+which supports the error analysis: colour/texture style drives the decision more than true
+generation artefacts.

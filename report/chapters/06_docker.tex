@@ -158,8 +158,8 @@ and the history is intact.
 \shot{s6_5_fixed}{After the fix: both services healthy.}
 
 \section{Tool lab: GitHub Actions (CI)}\label{sec:6-6}
-\textbf{Toy part.} In the throwaway repository \texttt{ci-toy-23L-0764}
-(\file{labs/ci_toy/}) a workflow runs on every push with a \textbf{matrix} of Python 3.11 and
+\textbf{Toy part.} On a separate orphan branch \texttt{ci-toy} of the repository (it shares no
+history or files with \texttt{main}; its content is \file{labs/ci_toy/}) a workflow runs on every push with a \textbf{matrix} of Python 3.11 and
 3.12, so the same job runs twice in parallel, once per version. I changed an assertion to a wrong
 value (red run), then reverted it (green run).
 \shot{s6_6_toy_red}{Toy workflow: failing test, red run.}

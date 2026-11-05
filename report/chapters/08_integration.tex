@@ -12,12 +12,14 @@ unchanged. In remote mode the web image can be built without TensorFlow
 The flow per upload: the browser posts to \texttt{/predict} $\rightarrow$ the web app validates
 the file locally (wrong types never leave my machine) $\rightarrow$ calls the API $\rightarrow$
 stores the decision, the model version reported by the API, \texttt{inference\_mode = remote} and
-the round-trip latency in PostgreSQL $\rightarrow$ shows the result page. If the API is unreachable
+the round-trip latency in the database $\rightarrow$ shows the result page. For this test the web
+app ran directly on my Windows laptop (\file{scripts/run_local.ps1}: virtual environment,
+\texttt{FLASK\_DEBUG=0}, history in a local SQLite file through the same SQLAlchemy code); in the
+Compose stack the same code writes to PostgreSQL (\cref{ch:db}). If the API is unreachable
 or answers with an error, the user gets a friendly 503 page and the attempt is still recorded with
 \texttt{status = error}.
 
 \shot{s8_health_remote}{Web app health in remote mode: model backend = the cloud API.}
-\shot{s8_send_samples}{Eight test images sent through the Flask app (truth vs verdict).}
 \shot{s8_result_1}{Upload 1 through the UI, answered by the cloud model.}
 \shot{s8_result_2}{Upload 2.}
 \shot{s8_result_3}{Upload 3.}

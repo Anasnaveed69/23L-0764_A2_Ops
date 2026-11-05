@@ -8,7 +8,11 @@ plot (\texttt{mlflow.log\_figure}) and the model (\texttt{mlflow.tensorflow.log\
 with \texttt{lr=0.001} and \texttt{lr=0.01} against a local store (\cmd{--local} writes to
 \file{./mlruns_toy}) and opened \cmd{mlflow ui --backend-store-uri ./mlruns_toy}. In the
 comparison view the two \texttt{val\_accuracy} curves can be overlaid and the parameter that
-differs is highlighted.
+differs is highlighted. These two local runs were executed on CPU in a separate Linux workspace
+(TensorFlow 2.20, MLflow 2.22.5), with the UI served on \texttt{127.0.0.1}. Result: after 5
+epochs the higher learning rate fits the training data faster (training accuracy 0.862 vs 0.849,
+loss 0.373 vs 0.437) but does not generalise better (validation accuracy 0.842 vs 0.846), so
+\texttt{lr=0.001} is the safer choice.
 
 \shot{s3_1_mlflow_runs}{Local MLflow UI: the toy experiment with both runs.}
 \shot{s3_1_mlflow_compare}{Comparison of the two learning rates.}
@@ -122,9 +126,15 @@ never used to choose, otherwise the test set would become a second validation se
 \textbf{Chosen: \texttt{\vgBestRun}} (validation AUC \vgBestValAuc, test AUC \vgBestTestAuc,
 test accuracy \vgBestTestAcc, test F1 \vgBestTestFone).
 
-\yours{Two or three sentences interpreting the table: which change helped or hurt most (e.g.\
-augmentation off, image size 160, no fine-tuning), and whether the autolog run matches the manual
-reference run (it should, same configuration).}
+\textbf{Interpretation.} Starting the transfer stage with the tuner's settings helped most (validation
+AUC 0.830 $\to$ 0.881, test F1 0.676 $\to$ 0.731). Turning augmentation \emph{off} also improved
+validation AUC (0.859): on this small dataset the random flips, rotations and zoom mostly slowed
+learning, and the fine generator textures the model relies on are changed by zoom and rotation. The smaller input
+(160 px) hurt most on the selection metric (validation AUC 0.764, validation FPR 0.29), because
+down-scaling erases fine texture; its higher test accuracy is noise on 146 images, and the
+selection rule ignores it on purpose. EfficientNetB0 had the best test AUC (0.852) but a lower
+validation AUC, so it was not chosen. The autolog run matches the manual reference (validation
+AUC 0.830 for both; test AUC 0.764 vs 0.754 because GPU training is not bit-exact).
 
 \begin{wrongbox}
 My first comparison ranked runs by the metric \texttt{val\_auc}, which is the Keras AUC of the
