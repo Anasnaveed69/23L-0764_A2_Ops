@@ -2,11 +2,14 @@
 \toprule
 \textbf{Run} & \textbf{Change vs reference} & \textbf{val AUC} & \textbf{val FPR} & \textbf{test acc} & \textbf{test F1} & \textbf{test AUC} & \textbf{best ep.} \\
 \midrule
+mnv2\_tuned & tuner's best: lr 2.2e-3, dropout 0.1, 60 layers unfrozen & 0.881 & 0.031 & 0.733 & 0.731 & 0.844 & 18 \\
 mnv2\_no\_aug & augmentation off & 0.859 & 0.031 & 0.678 & 0.618 & 0.814 & 18 \\
 mnv2\_lr\_1e-4 & head lr 1e-3 -> 1e-4 & 0.835 & 0.046 & 0.651 & 0.598 & 0.760 & 22 \\
 mnv2\_default & reference (MobileNetV2, lr 1e-3, aug, 224, last block) & 0.830 & 0.092 & 0.685 & 0.676 & 0.754 & 13 \\
+mnv2\_autolog & same as reference, autolog tracking & 0.830 & 0.123 & 0.678 & 0.671 & 0.764 & 13 \\
 mnv2\_frozen & no fine-tuning (all frozen) & 0.822 & 0.062 & 0.678 & 0.647 & 0.733 & 7 \\
+effb0\_default & backbone -> EfficientNetB0 & 0.805 & 0.062 & 0.685 & 0.629 & 0.852 & 22 \\
 mnv2\_img160 & image size 224 -> 160 & 0.764 & 0.292 & 0.747 & 0.758 & 0.793 & 18 \\
-baseline\_cnn & model: CNN from scratch & 0.393 & 1.000 & 0.548 & 0.708 & 0.476 & 1 \\
+baseline\_cnn & model: CNN from scratch & 0.757 & 0.123 & 0.651 & 0.598 & 0.743 & 38 \\
 \bottomrule
 \end{tabular}
