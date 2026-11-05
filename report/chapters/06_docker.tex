@@ -116,23 +116,27 @@ and should be self-contained and immutable.
 \toprule
 Image & Size \\
 \midrule
-\texttt{visionguard-web:naive} (\file{docker/Dockerfile.naive}) & \yoursize \\
-\texttt{visionguard-web:latest} (optimised) & \yoursize \\
-\texttt{visionguard-web:remote} (\texttt{WITH\_TF=false}) & \yoursize \\
+\texttt{visionguard-web:naive} (\file{docker/Dockerfile.naive}) & 6.06\,GB (1.87\,GB compressed content) \\
+\texttt{visionguard-web:latest} (optimised) & 2.16\,GB (422\,MB) \\
+\texttt{visionguard-web:remote} (\texttt{WITH\_TF=false}) & 385\,MB (90.8\,MB) \\
 \bottomrule
 \end{tabular}
 \caption{Image sizes from \cmd{docker images}.}\end{table}
 The naive image uses the full \texttt{python:3.11} base, the GPU \texttt{tensorflow} wheel with
 its CUDA libraries, keeps the pip cache and runs as root. \cmd{docker history} shows that the
-largest layer by far is the \texttt{pip install} of TensorFlow, followed by the base image; my own
-code is a few hundred KB. The optimisations applied were: slim base, \texttt{tensorflow-cpu},
+largest layer by far is the \texttt{pip install} of TensorFlow and the serving libraries
+(1.59\,GB), followed by the base image; my own code is about 150\,KB (\file{app} 82\,KB,
+\file{src} 66\,KB) and the user/metadata layers are a few KB. The optimisations applied were: slim base, \texttt{tensorflow-cpu},
 \texttt{PIP\_NO\_CACHE\_DIR}, and the ignore file.
 
 \shot{s6_4_sizes}{\cmd{docker images}: before and after.}
 \shot{s6_4_history}{\cmd{docker history}: the TensorFlow layer dominates.}
 
-\yours{Fill in the three sizes and write the conclusion, e.g.\ ``switching to slim + tensorflow-cpu
-cut the image from X GB to Y GB (-Z\%); dropping TensorFlow entirely for remote mode gives W MB''.}
+\textbf{Conclusion.} The slim base plus \texttt{tensorflow-cpu} and no pip cache cut the web image
+from 6.06\,GB to 2.16\,GB (\textbf{$-$64\%}); almost all of the saving is the CUDA libraries that the
+GPU wheel pulls in and a CPU-only server never uses. Building without TensorFlow for
+\texttt{INFERENCE\_MODE=remote}, where the model runs in the cloud API, brings it down to 385\,MB
+($-$94\% versus naive).
 
 \section{Operations and troubleshooting}
 Routine operations: \cmd{docker compose stop web}, \cmd{start}, \cmd{restart db},
