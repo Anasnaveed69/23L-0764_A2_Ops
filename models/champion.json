@@ -1,0 +1,27 @@
+{
+  "model_name": "VisionGuard-23L-0764",
+  "run_id": "2c84fae7f6bf45e6933c39b47709fde3",
+  "run_name": "mnv2_no_aug",
+  "image_size": 224,
+  "resize_mode": "squash",
+  "threshold": 0.78,
+  "model_type": "transfer",
+  "backbone": "mobilenetv2",
+  "best_epoch": 18,
+  "test_metrics": {
+    "accuracy": 0.6781,
+    "precision": 0.8837,
+    "recall": 0.475,
+    "f1": 0.6179,
+    "roc_auc": 0.8142,
+    "false_positive_rate": 0.0758,
+    "false_negative_rate": 0.525,
+    "tn": 61.0,
+    "fp": 5.0,
+    "fn": 42.0,
+    "tp": 38.0,
+    "threshold": 0.78
+  },
+  "model_version": "3",
+  "alias": "champion"
+}

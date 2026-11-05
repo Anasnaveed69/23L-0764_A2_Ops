@@ -1,0 +1,12 @@
+\begin{tabular}{lllr}
+\toprule
+\textbf{Layer} & \textbf{Type} & \textbf{Output shape} & \textbf{Params} \\
+\midrule
+image & InputLayer & (None, 224, 224, 3) & 0 \\
+mobilenetv2\_preprocess & Rescaling & (None, 224, 224, 3) & 0 \\
+backbone & Functional & (None, 7, 7, 1280) & 2,257,984 \\
+gap & GlobalAveragePooling2D & (None, 1280) & 0 \\
+head\_dropout & Dropout & (None, 1280) & 0 \\
+p\_ai & Dense & (None, 1) & 1,281 \\
+\bottomrule
+\end{tabular}
