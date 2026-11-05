@@ -96,15 +96,22 @@ response fields:
 \item \texttt{POST /v1/predict} with an AI image (form-data field \texttt{image}) $\rightarrow$ 200, label, confidence, latency;
 \item the same with a real photo;
 \item without the \texttt{X-API-Key} header $\rightarrow$ 401;
-\item with a \texttt{.txt} file $\rightarrow$ 415.
+\item with a non-image file (I used a \texttt{.md} file) $\rightarrow$ 415.
 \end{enumerate}
 \shot{s7_postman_health}{Postman: health.}
-\shot{s7_postman_ai}{Postman: AI image $\rightarrow$ verdict JSON.}
+\shot{s7_postman_ai}{Postman: AI image (\texttt{ai\_1.jpg}) $\rightarrow$ 200, all three test assertions pass.}
 \shot{s7_postman_real}{Postman: real photo $\rightarrow$ verdict JSON.}
 \shot{s7_postman_401}{Postman: missing API key rejected (401).}
-\shot{s7_postman_415}{Postman: wrong file type rejected (415).}
-\shot{s7_postman_console}{Postman console: logged results of the collection run.}
-\shot{s7_send_samples}{\file{scripts/send_samples.py} calling the cloud API with six test images.}
+\shot{s7_postman_415}{Postman: wrong file type (\texttt{.md}) rejected (415).}
 
-\yours{Copy one JSON response here (label, confidence, prob\_ai, model\_version, latency\_ms) and
-the measured latency range, e.g.\ ``50--80\,ms model time, 300--500\,ms round trip from Lahore''.}
+\textbf{Example response} (\texttt{real\_1.jpg}, from Postman):
+{\small\begin{verbatim}
+{"confidence": 0.997, "filename": "real_1.jpg", "height": 451, "label": "Real",
+ "latency_ms": 71.2, "model_name": "VisionGuard-23L-0764", "model_version": "8",
+ "prob_ai": 0.0037, "sha256": "73d6e698...f2bcbeb1", "threshold": 0.62, "width": 800}
+\end{verbatim}}
+\textbf{Latency.} The model itself needs about 70\,ms per image on the 2-vCPU VM
+(\texttt{latency\_ms}, 69--77\,ms over all requests in the API log). The round trip seen from
+Lahore is much larger and varies with the client: 0.2--0.4\,s from the Flask app on my laptop
+(re-used HTTPS connection) and 0.7--1.4\,s from Postman, which opens a new TLS connection per
+request and uploads through its agent. Nearly all of the time is network, not model.

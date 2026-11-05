@@ -10,7 +10,9 @@ confidence.
 \textbf{Limitations.}
 \begin{itemize}
 \item The dataset is small and scraped; ``AI'' images come from a few generators and ``real''
-images include edited and stock photos. Accuracy on new generators, screenshots or images
+images include edited and stock photos, classical paintings and clip-art. The error analysis and
+Grad-CAM (\cref{sec:2-6}) show that the model partly learned \emph{style} (painterly $\Rightarrow$ AI,
+photographic $\Rightarrow$ real) instead of generation artefacts. Accuracy on new generators, screenshots or images
 re-compressed by social media will be lower than the test numbers suggest.
 \item Size, format and compression differ between classes (\cref{ch:data}); despite resizing,
 some of the model's skill may come from these shortcuts rather than generation artefacts.
@@ -23,5 +25,3 @@ of prediction drift yet.
 \textbf{Next steps.} Train on a larger multi-generator dataset, add JPEG re-compression as a
 \emph{test-time} robustness check, log production predictions back to MLflow to monitor drift,
 and deploy the API image from CI on every tagged release.
-
-\yours{Optional: one sentence on what you learned or found hardest.}
