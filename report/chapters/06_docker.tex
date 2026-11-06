@@ -1,111 +1,113 @@
 \chapter{Containerization with Docker and Docker Compose}\label{ch:docker}
 
-\textbf{Where this ran.} All Docker work in this chapter was done on the project's Ubuntu 24.04
-VM (\texttt{vm-23L-0764-A2-Ops}, Docker Engine 29.9, Compose v5.7) over SSH from Azure Cloud
-Shell; every screenshot shows the \texttt{azureuser@vm-23L-0764-A2-Ops} prompt with date and time.
-The same files work unchanged with Docker Desktop on Windows. GitHub Actions additionally builds
-and smoke-tests both images on every push (\cref{sec:6-6}).
+I did all the Docker work in this chapter on the project's Ubuntu 24.04 VM
+(\texttt{vm-23L-0764-A2-Ops}, Docker Engine 29.9, Compose v5.7), connected over SSH from Azure Cloud
+Shell. Every screenshot shows the \texttt{azureuser@vm-23L-0764-A2-Ops} prompt with the date and
+time. The same files also work with Docker Desktop on Windows without changes, and GitHub Actions
+builds and smoke-tests both images on every push (\cref{sec:6-6}).
 
 \section{Docker warm-up}
-Before containerising my project I practised with the ready-made \texttt{nginx:1.27-alpine}
-image (\file{labs/docker_warmup.md}):
+Before putting my own project in containers I practised with the ready-made
+\texttt{nginx:1.27-alpine} image (\file{labs/docker_warmup.md}). The command
 \cmd{docker run -d --name warmup -p 8081:80 -v .../labs/warmup-site:/usr/share/nginx/html:ro nginx:1.27-alpine}
-runs it in the background (\cmd{-d}), maps host port 8081 to container port 80 (\cmd{-p}) and
-bind-mounts a folder with my own \file{index.html} read-only (\cmd{-v ...:ro}); the page appears
-at \texttt{http://localhost:8081}. \cmd{docker logs} shows nginx's access log for each refresh,
-\cmd{docker exec -it warmup sh} opens a shell inside the running container, \cmd{docker ps -a}
-lists containers, \cmd{docker stop}/\cmd{docker rm} remove the container and
-\cmd{docker images}/\cmd{docker rmi} the image.
+runs it in the background (\cmd{-d}), maps port 8081 on the host to port 80 in the container
+(\cmd{-p}) and mounts a folder with my own \file{index.html} read-only (\cmd{-v ...:ro}). The page
+then shows up at \texttt{http://localhost:8081}. \cmd{docker logs} shows an nginx access-log line
+for each refresh, \cmd{docker exec -it warmup sh} opens a shell inside the running container and
+\cmd{docker ps -a} lists the containers. \cmd{docker stop} and \cmd{docker rm} remove the
+container, and \cmd{docker images} and \cmd{docker rmi} list and remove the image.
 
 \shot{s6_1_run}{Run with port mapping and volume; page served in the browser.}
 \shot{s6_1_logs_exec}{Logs and a shell inside the container.}
 \shot{s6_1_cleanup}{Listing and removing containers and images.}
 
 \begin{description}[leftmargin=2.6cm,style=nextline]
-\item[Image] A read-only template: a file system plus metadata (command, environment, exposed
-ports) built from a Dockerfile. It does not run; it is the blueprint.
-\item[Container] A running (or stopped) instance of an image: an isolated process with its own
-file system view, network and process space, plus a thin writable layer that disappears when the
-container is removed.
-\item[Layer] Each Dockerfile instruction that changes the file system produces one immutable
-layer; an image is a stack of them. Layers are cached and shared between images, so an unchanged
-instruction is not rebuilt.
-\item[Volume] Storage managed outside the container's writable layer that survives container
-removal; a bind mount maps a host folder instead.
-\item[Port mapping] Forwarding a port on the host to a port inside the container's private
-network (\texttt{host:container}); without it the service is unreachable from outside.
+\item[Image] a read-only template built from a Dockerfile: a file system plus metadata (command,
+environment, exposed ports). An image does not run by itself.
+\item[Container] a running or stopped instance of an image. It is an isolated process with its own
+view of the file system, its own network and process space, and a thin writable layer that is lost
+when the container is removed.
+\item[Layer] each Dockerfile instruction that changes the file system creates one read-only layer,
+and an image is a stack of them. Layers are cached and shared between images, so an instruction
+that has not changed is not rebuilt.
+\item[Volume] storage kept outside the container's writable layer, so it survives when the
+container is removed. A bind mount maps a folder of the host instead.
+\item[Port mapping] forwards a port on the host to a port inside the container's private network
+(\texttt{host:container}). Without it the service cannot be reached from outside.
 \end{description}
 
 \section{Dockerfile for the web app}\label{sec:6-2}
-(\href{\GitHubURL/blob/main/Dockerfile}{\file{Dockerfile}}) Order of instructions and why:
+The \href{\GitHubURL/blob/main/Dockerfile}{\file{Dockerfile}} has its instructions in this order:
 \begin{enumerate}
-\item \texttt{FROM python:3.11-slim}: Debian slim without compilers or docs ($\sim$130\,MB
-instead of $\sim$1\,GB for \texttt{python:3.11}); all my dependencies ship as wheels.
-\item \texttt{ENV}: no \texttt{.pyc} files, unbuffered logs (they appear immediately in
-\cmd{docker logs}), \texttt{PIP\_NO\_CACHE\_DIR=1} so the pip cache is not baked into a layer.
-\item \texttt{COPY requirements-*.txt} then \texttt{RUN pip install}: \textbf{dependencies before
-source}. Docker reuses a cached layer as long as the instruction and the files it copies are
-unchanged. Requirements rarely change; code changes constantly. With this order, editing a
-template or a route reuses the cached $\sim$1\,GB TensorFlow layer and rebuilds in seconds;
-copying the source first would invalidate the cache and reinstall everything on every edit.
-\item \texttt{useradd vg} (uid 10001) and later \texttt{USER vg}: the app does not run as root,
-so a compromised process cannot modify the image's files or install software.
-\item \texttt{COPY src app}: the code, owned by \texttt{vg}. The model is \emph{not} copied (it is
-mounted, \cref{sec:6-3}).
-\item \texttt{HEALTHCHECK}: every 30\,s Python requests \texttt{/health} (slim has no
-\texttt{curl}); Docker marks the container \emph{unhealthy} after 3 failures.
-\item \texttt{CMD gunicorn ...}: production WSGI server, exec form so gunicorn is PID 1 and
-receives \texttt{SIGTERM} for a clean shutdown.
+\item \texttt{FROM python:3.11-slim}, a slim Debian without compilers or docs (about 130\,MB,
+compared with about 1\,GB for \texttt{python:3.11}). All my dependencies come as wheels, so I do not
+need a compiler.
+\item \texttt{ENV} settings: no \texttt{.pyc} files, unbuffered output so logs appear in
+\cmd{docker logs} straight away, and \texttt{PIP\_NO\_CACHE\_DIR=1} so the pip cache does not end
+up inside a layer.
+\item \texttt{COPY requirements-*.txt} and then \texttt{RUN pip install}, before any source code.
+Docker reuses a cached layer as long as the instruction and the files it copies have not changed.
+The requirements rarely change and the code changes all the time, so with this order editing a
+template or a route reuses the cached TensorFlow layer (about 1\,GB) and the rebuild takes seconds.
+If the source were copied first, every edit would invalidate the cache and reinstall everything.
+\item \texttt{useradd vg} (uid 10001) and later \texttt{USER vg}, so the app does not run as root.
+A compromised process then cannot change the image's files or install software.
+\item \texttt{COPY src app} copies the code, owned by \texttt{vg}. The model is not copied here;
+it is mounted at run time (\cref{sec:6-3}).
+\item \texttt{HEALTHCHECK}: every 30\,s a small Python call requests \texttt{/health} (the slim
+image has no \texttt{curl}), and Docker marks the container unhealthy after 3 failures.
+\item \texttt{CMD gunicorn ...} starts the production WSGI server. The exec form makes gunicorn
+PID 1, so it receives \texttt{SIGTERM} and shuts down cleanly.
 \end{enumerate}
-\textbf{Ignore file.} \file{.dockerignore} excludes \file{.git}, \file{.env}, \file{data/},
-\file{mlruns/}, \file{outputs/}, notebooks, tests and the report from the build context: the
-upload to the Docker daemon is small, and secrets and datasets can never end up in a layer.
-\textbf{Secrets} are only passed at run time as environment variables from the untracked
-\file{.env}; \cmd{docker history} of the image shows none.
+\file{.dockerignore} leaves \file{.git}, \file{.env}, \file{data/}, \file{mlruns/},
+\file{outputs/}, the notebooks, the tests and the report out of the build context. The upload to
+the Docker daemon stays small, and secrets or the dataset cannot end up in a layer. Secrets are
+only passed in at run time, as environment variables from the untracked \file{.env}, and
+\cmd{docker history} of the image shows none of them.
 
-\textbf{TensorFlow package.} I install \texttt{tensorflow-cpu==2.20.0}: the default
-\texttt{tensorflow} wheel on Linux bundles CUDA/cuDNN libraries (several GB) that a CPU-only
-server never uses, while a single MobileNetV2 prediction takes tens of milliseconds on a CPU.
-A build argument \texttt{WITH\_TF=false} builds the web image without TensorFlow at all for
+I install \texttt{tensorflow-cpu==2.20.0}. The default \texttt{tensorflow} wheel on Linux comes
+with the CUDA and cuDNN libraries (several GB), which a CPU-only server never uses, and a single
+MobileNetV2 prediction only takes tens of milliseconds on a CPU anyway. A build argument,
+\texttt{WITH\_TF=false}, builds the web image without TensorFlow at all for
 \texttt{INFERENCE\_MODE=remote}, where the model runs in the cloud API.
 
 \shot{s6_2_whoami}{The process inside the container runs as the unprivileged user \texttt{vg} (uid 10001).}
 
-\begin{wrongbox}
-My first container started gunicorn with \texttt{--preload} (load the app in the master process
-before forking workers, so start-up errors appear immediately). Health checks passed, but the
-first prediction hung until gunicorn's timeout killed the worker. TensorFlow starts thread pools
-when it initialises; \texttt{fork()} copies only the calling thread, so the child inherited
-locks held by threads that no longer exist and deadlocked. Removing \texttt{--preload} makes the
-worker load the model itself after the fork. It is still loaded once per process.
-\end{wrongbox}
+My first container started gunicorn with \texttt{--preload}, which loads the app in the master
+process before forking the workers so that start-up errors show up immediately. The health checks
+passed, but the first prediction hung until gunicorn's timeout killed the worker. TensorFlow starts
+its thread pools when it initialises, and \texttt{fork()} only copies the thread that calls it, so
+the worker inherited locks held by threads that no longer existed and deadlocked. Without
+\texttt{--preload} the worker loads the model itself after the fork, and it is still loaded only
+once per process.
 
 \section{Compose stack}\label{sec:6-3}
-(\href{\GitHubURL/blob/main/docker-compose.yml}{\file{docker-compose.yml}})
+\href{\GitHubURL/blob/main/docker-compose.yml}{\file{docker-compose.yml}} works as follows:
 \begin{itemize}
-\item \textbf{Two services}, \texttt{web} and \texttt{db} (\texttt{postgres:16-alpine}), on a user
-network \texttt{backend}. Compose's internal DNS resolves service names, so the web app connects
-to \texttt{postgresql+psycopg2://\ldots@db:5432/visionguard}: \texttt{db} is the service name,
-not an IP.
-\item \textbf{Named volume} \texttt{pgdata} holds the database files, so the history survives
-\cmd{docker compose down} and image upgrades (only \cmd{down -v} deletes it).
-\item \textbf{Readiness}: \texttt{db} has a health check (\cmd{pg_isready}) and \texttt{web}
-declares \texttt{depends\_on: db: condition: service\_healthy}, so the app starts only when
-PostgreSQL accepts connections (plain \texttt{depends\_on} only waits for the container to
-\emph{start}, which is too early). The app also retries its first connection.
-\item \textbf{No published database port}: \texttt{db} has no \texttt{ports:} entry, so it is
-reachable only from containers on \texttt{backend}, not from my machine or the network.
-\item \textbf{Secrets}: passwords come from the untracked \file{.env}
-(\texttt{\$\{POSTGRES\_PASSWORD:?\}} makes Compose refuse to start if it is missing);
-\file{.env.example} is committed with placeholders.
+\item There are two services, \texttt{web} and \texttt{db} (\texttt{postgres:16-alpine}), on a user
+network called \texttt{backend}. Compose's internal DNS resolves service names, so the web app
+connects to \texttt{postgresql+psycopg2://\ldots@db:5432/visionguard}, where \texttt{db} is the
+service name and not an IP address.
+\item A named volume, \texttt{pgdata}, holds the database files, so the history survives
+\cmd{docker compose down} and image upgrades. Only \cmd{down -v} deletes it.
+\item \texttt{db} has a health check (\cmd{pg_isready}) and \texttt{web} declares
+\texttt{depends\_on: db: condition: service\_healthy}, so the app only starts once PostgreSQL
+accepts connections. A plain \texttt{depends\_on} only waits for the container to start, which is
+too early. The app also retries its first connection.
+\item The database port is not published. \texttt{db} has no \texttt{ports:} entry, so only
+containers on \texttt{backend} can reach it, and it is invisible from my machine and the network.
+\item Passwords come from the untracked \file{.env}. \texttt{\$\{POSTGRES\_PASSWORD:?\}} makes
+Compose refuse to start if the variable is missing, and \file{.env.example} is committed with
+placeholders.
 \end{itemize}
 
-\textbf{How the model reaches the container: mounted.} \file{./models} is bind-mounted read-only
-at \file{/app/models}. Promoting a new champion is then \cmd{python scripts/export_champion.py}
-and \cmd{docker compose restart web}; no rebuild, and the 9.6\,MB model is not duplicated into
-every image version. \texttt{:ro} means the app cannot modify it. For the cloud API I made the
-opposite choice (built in, \cref{ch:deploy}) because there the image is shipped to another machine
-and should be self-contained and immutable.
+The model reaches the web container through a mount: \file{./models} is mounted read-only at
+\file{/app/models}. Promoting a new champion then only takes
+\cmd{python scripts/export_champion.py} and \cmd{docker compose restart web}, with no rebuild, and
+the 9.6\,MB model is not copied into every version of the image. Because of \texttt{:ro} the app
+cannot change it. For the cloud API I did the opposite and built the model into the image
+(\cref{ch:deploy}), because that image is shipped to another machine and should be self-contained
+and never change after it is built.
 
 \shot{s6_3_ps_healthy}{\cmd{docker compose ps}: both services healthy.}
 \shot{s6_3_port_closed}{The database port is closed from outside (\cmd{docker compose port db 5432} is empty; a connection to localhost:5432 is refused).}
@@ -122,68 +124,70 @@ Image & Size \\
 \bottomrule
 \end{tabular}
 \caption{Image sizes from \cmd{docker images}.}\end{table}
-The naive image uses the full \texttt{python:3.11} base, the GPU \texttt{tensorflow} wheel with
+The naive image uses the full \texttt{python:3.11} base and the GPU \texttt{tensorflow} wheel with
 its CUDA libraries, keeps the pip cache and runs as root. \cmd{docker history} shows that the
-largest layer by far is the \texttt{pip install} of TensorFlow and the serving libraries
-(1.59\,GB), followed by the base image; my own code is about 150\,KB (\file{app} 82\,KB,
-\file{src} 66\,KB) and the user/metadata layers are a few KB. The optimisations applied were: slim base, \texttt{tensorflow-cpu},
-\texttt{PIP\_NO\_CACHE\_DIR}, and the ignore file.
+biggest layer by far is the \texttt{pip install} of TensorFlow and the serving libraries
+(1.59\,GB), followed by the base image. My own code is only about 150\,KB (\file{app} 82\,KB,
+\file{src} 66\,KB), and the user and metadata layers are a few KB each. For the optimised image I
+switched to the slim base and \texttt{tensorflow-cpu}, turned off the pip cache and added the
+ignore file.
 
 \shot{s6_4_sizes}{\cmd{docker images}: before and after.}
 \shot{s6_4_history}{\cmd{docker history}: the TensorFlow layer dominates.}
 
-\textbf{Conclusion.} The slim base plus \texttt{tensorflow-cpu} and no pip cache cut the web image
-from 6.06\,GB to 2.16\,GB (\textbf{$-$64\%}); almost all of the saving is the CUDA libraries that the
-GPU wheel pulls in and a CPU-only server never uses. Building without TensorFlow for
-\texttt{INFERENCE\_MODE=remote}, where the model runs in the cloud API, brings it down to 385\,MB
-($-$94\% versus naive).
+Together these changes took the web image from 6.06\,GB down to 2.16\,GB, a 64\% reduction. Almost
+all of that comes from the CUDA libraries that the GPU wheel pulls in. Building without TensorFlow
+for \texttt{INFERENCE\_MODE=remote}, where the model runs in the cloud API, brings it down to
+385\,MB, 94\% smaller than the naive image.
 
 \section{Operations and troubleshooting}
-Routine operations: \cmd{docker compose stop web}, \cmd{start}, \cmd{restart db},
+For day-to-day operations I used \cmd{docker compose stop web}, \cmd{start}, \cmd{restart db},
 \cmd{docker compose logs --tail 30 web}, \cmd{docker compose exec web sh} and
 \cmd{docker compose exec db psql -U visionguard}.
 \shot{s6_5_ops}{Start/stop/restart, logs and shells in both services.}
 
-\textbf{Deliberate failure: wrong database password.} I changed \texttt{POSTGRES\_PASSWORD} in
-\file{.env} and recreated only the web container. \cmd{docker compose ps} showed it restarting.
-\textbf{Diagnosis from the logs only:} \cmd{docker compose logs web} showed my retry loop
-(\texttt{database not ready (OperationalError), retry n/10}) and then
+To practise troubleshooting I broke the stack on purpose. I changed \texttt{POSTGRES\_PASSWORD} in
+\file{.env} and recreated only the web container, and \cmd{docker compose ps} showed it restarting.
+Using only the logs, \cmd{docker compose logs web} showed my retry loop
+(\texttt{database not ready (OperationalError), retry n/10}) followed by
 \texttt{FATAL: password authentication failed for user "visionguard"}. So the network and the
-database were fine (it answered) and the credentials were wrong. A key detail: the PostgreSQL
-image applies \texttt{POSTGRES\_PASSWORD} only when the volume is \emph{first} initialised, so the
-database kept the old password and only the client side changed. \textbf{Fix:} restore the value
-in \file{.env} and \cmd{docker compose up -d --force-recreate web}; the service returns to healthy
-and the history is intact.
+database were working, since the database answered, and the credentials were wrong. One detail
+surprised me: the PostgreSQL image only applies \texttt{POSTGRES\_PASSWORD} when the volume is
+initialised for the first time, so the database still had the old password and only the client
+side had changed. To fix it I restored the value in \file{.env} and ran
+\cmd{docker compose up -d --force-recreate web}. The service was healthy again and the history was
+still there.
 \shot{s6_5_failure_logs}{Log excerpt of the failure.}
 \shot{s6_5_fixed}{After the fix: both services healthy.}
 
 \section{Tool lab: GitHub Actions (CI)}\label{sec:6-6}
-\textbf{Toy part.} On a separate orphan branch \texttt{ci-toy} of the repository (it shares no
-history or files with \texttt{main}; its content is \file{labs/ci_toy/}) a workflow runs on every push with a \textbf{matrix} of Python 3.11 and
-3.12, so the same job runs twice in parallel, once per version. I changed an assertion to a wrong
-value (red run), then reverted it (green run).
+For the toy part I used a separate orphan branch of the repository, \texttt{ci-toy}, which shares
+no history or files with \texttt{main} (its content is \file{labs/ci_toy/}). A workflow runs on
+every push with a matrix of Python 3.11 and 3.12, so the same job runs twice in parallel, once per
+version. I changed an assertion to a wrong value, which gave a red run, and then fixed it, which
+gave a green one.
 \shot{s6_6_toy_red}{Toy workflow: failing test, red run.}
 \shot{s6_6_toy_green}{Toy workflow: fixed, green run on both Python versions.}
 
-\textbf{Applied to VisionGuard} (\file{.github/workflows/ci.yml}), on every push:
+For VisionGuard, \file{.github/workflows/ci.yml} runs three jobs on every push:
 \begin{enumerate}
-\item \textbf{lint + tests} on Python 3.11 and 3.12: \cmd{ruff check .}, then \cmd{pytest}
-(27 tests: upload validation, all routes and the DB trail with a fake predictor, the inference
-module and the API's key check with a tiny model).
-\item \textbf{tests against PostgreSQL}: a \texttt{postgres:16} service container, so the trail is
-tested on the same database engine as production.
-\item \textbf{docker}: builds the web and API images (with layer caching) and starts them, waits
-for \texttt{/health}, asserts the process user is \texttt{vg} and that the API returns 401 without
-a key. A tiny dummy model is generated for this step because the real champion lives in the
-registry, not in Git.
+\item Lint and tests on Python 3.11 and 3.12: \cmd{ruff check .} and then \cmd{pytest}. The 27
+tests cover upload validation, all routes and the DB trail with a fake predictor, the inference
+module, and the API's key check with a tiny model.
+\item Tests against PostgreSQL, using a \texttt{postgres:16} service container, so the trail is
+tested on the same database engine as in production.
+\item A Docker job that builds the web and API images (with layer caching), starts them, waits for
+\texttt{/health}, and checks that the process user is \texttt{vg} and that the API returns 401
+without a key. It uses the committed champion model, and only generates a tiny dummy model if that
+file is missing.
 \end{enumerate}
 The badge in \file{README.md} shows the status of the latest run.
 
-\textbf{Where secrets go.} Secrets (e.g.\ a DagsHub token, a deploy key) are stored in the
-repository's \emph{Settings $\rightarrow$ Secrets and variables $\rightarrow$ Actions}, encrypted,
-and referenced as \texttt{\$\{\{ secrets.NAME \}\}}; GitHub injects them at run time and masks them
-in logs. Writing them in the workflow file would publish them to anyone who can read the
-repository, forever in Git history, and forks would copy them.
+Secrets such as a DagsHub token or a deploy key belong in the repository's Settings, under
+Secrets and variables, then Actions. GitHub stores them encrypted, the workflow refers to them as
+\texttt{\$\{\{ secrets.NAME \}\}}, and GitHub injects them at run time and masks them in the logs.
+If I wrote them into the workflow file, anyone who can read the repository would see them, they
+would stay in the Git history forever, and every fork would copy them.
 
 \shot{s6_6_project_green}{VisionGuard CI: all jobs green.}
 \shot[0.7]{s6_6_badge}{CI status badge in the README.}

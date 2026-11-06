@@ -16,13 +16,13 @@ Commit hash of graded version & \texttt{\CommitHash} \\
 \end{tabularx}
 
 \section*{System at a glance}
-VisionGuard is a web service that estimates whether an uploaded image was produced by a generative
-model or by a camera. The pipeline is: Kaggle dataset $\rightarrow$ audit and cleaning
-$\rightarrow$ DVC-versioned data on DagsHub $\rightarrow$ \texttt{tf.data} pipeline $\rightarrow$
-two Keras models (a CNN from scratch and a fine-tuned MobileNetV2) $\rightarrow$ every run tracked
-in MLflow on DagsHub $\rightarrow$ the best model registered with alias \texttt{champion}
-$\rightarrow$ a model API container on an Azure VM behind HTTPS $\rightarrow$ a Flask web app in
-Docker Compose with a PostgreSQL audit trail, calling that API.
+VisionGuard is a web service that estimates whether an uploaded image was made by a generative
+model or taken with a camera. The data comes from a Kaggle dataset, which I audited and cleaned and
+then versioned with DVC on DagsHub. A \texttt{tf.data} pipeline feeds two Keras models, a CNN
+trained from scratch and a fine-tuned MobileNetV2, and every run is tracked in MLflow on DagsHub.
+The best model is registered with the alias \texttt{champion} and served by a model API container
+on an Azure VM behind HTTPS. A Flask web app, which runs in Docker Compose with a PostgreSQL audit
+trail, calls that API.
 
 \begin{figure}[H]\centering\small
 \setlength{\fboxsep}{6pt}
@@ -39,25 +39,20 @@ MLflow (DagsHub) $\rightarrow$ Registry \texttt{@champion} $\rightarrow$ \texttt
 \end{figure}
 
 \section*{Disclosure of AI assistance and tutorials}
-I used an AI assistant, Claude (Anthropic), extensively in this assignment:
-\begin{itemize}
-\item \textbf{Code}: Claude wrote most of the code in the repository (data scripts, training and
-tracking code, Flask app, API, Dockerfiles, Compose files, CI workflow, Colab notebooks), which I
-reviewed.
-\item \textbf{Execution}: through the Claude desktop app, Claude operated my browser to run the
-Colab notebooks, create the GitHub/DagsHub repositories and set up the Azure VM via Cloud Shell,
-while I signed in to each service, created the access tokens and entered all secrets myself.
-\item \textbf{Report}: Claude drafted the explanations in this report; I checked them against
-my results and edited them. All numbers, tables and plots come from the actual runs (they are
-written by the project scripts from MLflow and the evaluation code, not typed by hand).
-\end{itemize}
-Documentation consulted: TensorFlow/Keras guides (\texttt{tf.data}, transfer learning), MLflow,
-DagsHub, DVC, Docker/Compose, GitHub Actions and Azure documentation.
+I used an AI assistant, Claude (Anthropic), a lot in this assignment. Claude wrote most of the code
+in the repository (data scripts, training and tracking code, the Flask app, the API, Dockerfiles,
+Compose files, the CI workflow and the Colab notebooks), and I reviewed it. Through the Claude
+desktop app it also operated my browser to run the Colab notebooks, create the GitHub and DagsHub
+repositories and set up the Azure VM from Cloud Shell, while I signed in to each service, created
+the access tokens and entered every secret myself. Claude drafted the explanations in this report,
+and I checked them against my results and edited them. All numbers, tables and plots come from the
+actual runs: the project scripts write them from MLflow and the evaluation code, so none of them
+were typed in by hand.
 
+Documentation I used: the TensorFlow/Keras guides (\texttt{tf.data}, transfer learning) and the
+MLflow, DagsHub, DVC, Docker/Compose, GitHub Actions and Azure documentation.
 
-
-\section*{How to read this report}
-Each chapter is one task; each section is one sub-task ID from the assignment, and explains
-\emph{what} I did, \emph{why}, \emph{how it works}, and \emph{what went wrong}. Every command is
-explained where it is used. Tables marked as generated were written by the project scripts
-(\file{report/generated/}) so the numbers cannot drift from the actual runs.
+\section*{How this report is organised}
+Each chapter is one task of the assignment and each numbered section is one sub-task. Commands are
+explained where they are first used. Tables built by the project scripts live in
+\file{report/generated/}, so their numbers always match the runs.

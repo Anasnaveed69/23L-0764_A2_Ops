@@ -1,26 +1,34 @@
 \chapter{Flask Web Application}\label{ch:flask}
 
 \section{Inference module}
-\file{src/visionguard/inference.py} defines \texttt{Predictor}. Its constructor runs once per
-process: it loads \file{champion.keras} with \texttt{keras.models.load\_model}, reads
-\file{champion.json} (image size, resize mode, threshold, version), and runs one dummy prediction
-to warm up the TensorFlow graph. \texttt{predict\_bytes(data)} decodes the bytes, resizes them,
-predicts $p(\text{AI})$, applies the threshold and returns label, confidence (probability of the
-predicted label), $p(\text{AI})$, threshold, model name/version and latency.
+\file{src/visionguard/inference.py} defines the \texttt{Predictor} class. Its constructor runs
+once per process: it loads \file{champion.keras} with \texttt{keras.models.load\_model}, reads
+\file{champion.json} (image size, resize mode, threshold, version) and runs one dummy prediction to
+warm up the TensorFlow graph. \texttt{predict\_bytes(data)} decodes and resizes the bytes, predicts
+$p(\text{AI})$, applies the threshold and returns the label, a confidence value, $p(\text{AI})$,
+the threshold, the model name and version, and the latency.
 
-\textbf{Why not load per request.} Loading deserialises millions of weights and builds the graph:
-it takes seconds and hundreds of MB. Per request, every user would wait for it, memory would
-spike with concurrent requests, and the first predict of a fresh model is the slowest one. Loading
-once and keeping the model in memory makes each prediction tens of milliseconds.
+The confidence is measured from the threshold. It is 50\% when $p(\text{AI})$ sits exactly on the
+threshold and 100\% when $p(\text{AI})$ is 0 or 1. My first version reported the probability of
+the predicted label. With a threshold below 0.5 that gave odd results: an image with
+$p(\text{AI})=0.49$ was labelled AI-generated with a ``confidence'' of 49\%, which looks
+contradictory to anyone reading it. Measuring from the threshold fixes that, and the result page
+also shows the threshold on a scale so the user can see where the image falls.
 
-\textbf{Why training and serving preprocessing must match.} The model only learned the mapping
-from \emph{the inputs it saw}. If serving resized with a different interpolation, kept the alpha
-channel, scaled to a different range or preserved the aspect ratio when training did not, the
-inputs would come from a different distribution and predictions would silently degrade, with no
-error raised (\emph{training/serving skew}). I removed the possibility by construction: training,
-audit and serving call the same \texttt{decode\_and\_resize} function, the image size and resize
-mode travel with the model in \file{champion.json}, and backbone-specific scaling is a layer
-inside the saved model.
+The model is loaded once because loading means deserialising millions of weights and building the
+graph, which takes seconds and hundreds of MB of memory. If I did it per request, every user would
+wait for it, memory would spike when several requests came in together, and the first prediction
+of a freshly loaded model is always the slowest. Kept in memory, a prediction takes tens of
+milliseconds.
+
+Preprocessing in serving has to match training exactly. The model only learned from the kind of
+input it saw during training. If serving used a different interpolation, kept the alpha channel,
+scaled to another range or kept the aspect ratio while training squashed it, the inputs would come
+from a different distribution and the predictions would get worse without any error being raised.
+This is called training/serving skew. In my code it cannot happen: training, the audit and serving
+all call the same \texttt{decode\_and\_resize} function, the image size and resize mode are stored
+with the model in \file{champion.json}, and the backbone-specific scaling is a layer inside the
+saved model.
 
 \shot{s4_1_console}{\file{scripts/infer_cli.py}: model loaded once, then two known test images (one AI, one real).}
 
@@ -29,69 +37,62 @@ inside the saved model.
 \toprule
 Route & Method & Purpose \\
 \midrule
-/ & GET & upload page (drag \& drop, client-side preview, last 5 checks) \\
-/predict & POST & validate, predict, write DB row, redirect to the result (Post/Redirect/Get) \\
-/result/<id> & GET & verdict, confidence, $p(\text{AI})$ vs threshold, caveat, audit record \\
+/ & GET & upload page (drag and drop, preview, last 5 checks) \\
+/predict & POST & validate, predict, write the DB row, redirect to the result (Post/Redirect/Get) \\
+/result/<id> & GET & verdict, confidence, $p(\text{AI})$ against the threshold, caveat, audit record \\
 /history & GET & paginated database trail, filter by verdict, show rejected uploads \\
 /api/history & GET & the same trail as JSON \\
 /health & GET & JSON health check: DB reachable, model backend reachable, model version \\
 \bottomrule
 \end{tabularx}
 
-\textbf{Validation} (\file{src/visionguard/validation.py}), cheapest check first:
+Validation is in \file{src/visionguard/validation.py} and runs the cheapest checks first:
 \begin{enumerate}
-\item No file $\rightarrow$ 400.
-\item Extension not in \{jpg, jpeg, png, webp, bmp, gif\} $\rightarrow$ \textbf{415 Unsupported file type}.
-\item Size: Flask's \texttt{MAX\_CONTENT\_LENGTH} rejects oversized bodies before my code runs,
-and the stream is read with a hard limit of 5\,MB + 1 byte $\rightarrow$ \textbf{413 File too large}.
-\item Full decode with Pillow (verify + load) $\rightarrow$ \textbf{422 Not a readable image} for
-renamed non-images or truncated files. Pillow's decompression-bomb limit is also set.
+\item No file gives 400.
+\item An extension other than jpg, jpeg, png, webp, bmp or gif gives 415 (unsupported file type).
+\item Flask's \texttt{MAX\_CONTENT\_LENGTH} rejects oversized requests before my code even runs, and
+the stream is read with a hard limit of 5\,MB plus one byte. Too large gives 413.
+\item A full decode with Pillow (verify, then load) catches renamed non-images and truncated files
+and gives 422 (not a readable image). Pillow's decompression-bomb limit is set as well.
 \end{enumerate}
-File names go through \texttt{werkzeug.utils.secure\_filename} (e.g.\
-\texttt{../../etc/passwd.png} becomes \texttt{etc\_passwd.png}) and are only stored as text.
-The upload is read into memory and \textbf{never written to disk}: only its SHA-256 hash, size
-and dimensions are kept. Every error renders a friendly page with the status code, a plain
-explanation and a way back; unexpected exceptions are logged with a traceback but the user only
-sees a generic 500 page.
+File names go through \texttt{werkzeug.utils.secure\_filename} (so \texttt{../../etc/passwd.png}
+becomes \texttt{etc\_passwd.png}) and are only ever stored as text. The upload is read into memory
+and never written to disk; I keep only its SHA-256 hash, size and dimensions. Each error shows a
+simple page with the status code, a short explanation and a link back. Unexpected exceptions are
+logged with a traceback, and the user only sees a generic 500 page.
 
 \shot[0.8]{s4_2_wrong_type}{Failure case 1: wrong file type (415).}
 \shot[0.8]{s4_2_too_large}{Failure case 2: file over the size limit (413).}
-\shot[0.8]{s4_2_corrupt}{Failure case 3: a text file renamed to \texttt{.jpg} (422).}
+\shot[0.8]{s4_2_corrupt}{Failure case 3: random bytes saved as \texttt{.jpg} (422).}
 
 \section{HTML and CSS}
-Templates use Jinja inheritance (\file{base.html} holds the header, navigation with the History
-menu, and the footer showing the model version and inference mode). The result page shows the
-verdict in the class colour, a confidence bar, a scale with the decision threshold and the
-model's $p(\text{AI})$, a ``low certainty'' badge under 65\%, and an honest caveat box: the result
-is a statistical estimate, weakest on screenshots, heavy compression and newer generators, tuned to
-avoid false accusations, and never sufficient on its own. The stylesheet is plain CSS with a dark
-mode and a mobile layout.
+The templates use Jinja inheritance. \file{base.html} has the header, the navigation with the
+History menu, and a footer with the model version and inference mode. The result page shows the
+verdict in the colour of its class, a confidence bar, a scale with the decision threshold and the
+model's $p(\text{AI})$, and a ``low certainty'' badge when the confidence is under 65\%. Below that
+is a caveat box. It says the result is a statistical estimate, that it is weakest on screenshots,
+heavily compressed images and newer generators, that the threshold was tuned to avoid false
+accusations, and that the result should never be used on its own to accuse someone. The stylesheet
+is plain CSS with a dark mode and a mobile layout.
 
-\shot{s4_3_upload}{Upload page.}
+\shot{s4_3_upload}{Upload page with the latest checks.}
 \shot{s4_3_result}{Result page with verdict, confidence, threshold scale and caveat.}
 \shot{s4_3_history}{History menu: the database trail.}
 
-\begin{wrongbox}
-With the threshold chosen on validation data below 0.5 (e.g.\ 0.47), an image with
-$p(\text{AI})=0.49$ is labelled AI-generated with a ``confidence'' of 49\%, which looks
-contradictory. The number is honest (it is the model's probability for that label), so instead of
-hiding it the page now shows the threshold scale and a ``low certainty'' badge.
-\end{wrongbox}
-
 \section{Configuration and production server}
-All settings are environment variables read in \file{app/config.py}: \texttt{MODEL\_PATH},
+All settings are environment variables, read in \file{app/config.py}: \texttt{MODEL\_PATH},
 \texttt{THRESHOLD} (optional override), \texttt{DATABASE\_URL}, \texttt{INFERENCE\_MODE}
-(\texttt{local}/\texttt{remote}), \texttt{MODEL\_API\_URL}, \texttt{MODEL\_API\_KEY},
-\texttt{MAX\_UPLOAD\_MB}, \texttt{SECRET\_KEY}, \texttt{FLASK\_DEBUG}. The same image therefore
-runs on my laptop, in Compose and against the cloud API without code changes, and no secret is in
-the code or the image.
+(\texttt{local} or \texttt{remote}), \texttt{MODEL\_API\_URL}, \texttt{MODEL\_API\_KEY},
+\texttt{MAX\_UPLOAD\_MB}, \texttt{SECRET\_KEY} and \texttt{FLASK\_DEBUG}. So the same code runs on
+my laptop, in Compose and against the cloud API without changes, and there are no secrets in the
+code or in the image.
 
-In the container the app is served by \textbf{gunicorn} (1 worker, 4 threads), not by
-\cmd{flask run}: Flask's built-in server is single-process, not hardened, and meant for
-development. Debug mode is \textbf{off} (\texttt{FLASK\_DEBUG=0}, visible as
-\texttt{"debug": false} in \texttt{/health}) because the Werkzeug debugger lets anyone who
-triggers an error execute arbitrary Python in the browser, and debug pages leak source code and
-configuration. One worker keeps one copy of the model in RAM; threads overlap waiting on the
+In the container the app runs under gunicorn (1 worker, 4 threads) instead of \cmd{flask run}.
+Flask's built-in server is a single process meant for development and was never hardened for
+production. Debug mode is off (\texttt{FLASK\_DEBUG=0}, shown as \texttt{"debug": false} in
+\texttt{/health}). With debug on, the Werkzeug debugger lets anyone who triggers an error run
+arbitrary Python from the browser, and the debug pages show source code and configuration. One
+worker keeps a single copy of the model in RAM, and the threads cover the time spent waiting on the
 database and the network.
 
 \shot{s4_4_health}{\texttt{/health} response: database ok, model backend ok, debug false.}

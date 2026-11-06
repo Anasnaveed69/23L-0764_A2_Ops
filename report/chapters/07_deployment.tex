@@ -1,11 +1,11 @@
 \chapter{API Deployment}\label{ch:deploy}
 
-\textbf{Design.} Following the assignment, the \emph{model} goes to the cloud as an HTTP API and
-the Flask web app runs on my machine and calls it. I chose \textbf{pathway C}: one Ubuntu VM on
-\textbf{Azure} (Azure for Students: \$100 credit with a university e-mail, no credit card)
-running a small Compose stack.
+As the assignment asks, the model goes to the cloud as an HTTP API, and the Flask web app runs on
+my machine and calls it. I went with pathway C: a single Ubuntu VM on Azure running a small
+Compose stack. I used Azure for Students, which gives \$100 of credit with a university e-mail and
+does not need a credit card.
 
-\textbf{API URL: \url{\APIURL}}
+The API is live at \url{\APIURL}.
 
 \begin{table}[H]\centering\small
 \begin{tabularx}{\linewidth}{l X}
@@ -13,105 +13,111 @@ running a small Compose stack.
 Compose / local element & Azure equivalent used \\
 \midrule
 Host running Docker & VM \texttt{vm-23L-0764-A2-Ops} in resource group \texttt{rg-23L-0764-A2-Ops}, region Central India, Ubuntu 24.04 x64, size \texttt{Standard\_B2s\_v2} (2 vCPU, 8\,GB) \\
-Published ports 80/443 & Network Security Group inbound rules + \texttt{ufw} on the VM \\
-\texttt{api} service & \file{api/Dockerfile}: gunicorn + Flask API + TensorFlow-CPU, model built in \\
+Published ports 80/443 & Network Security Group inbound rules and \texttt{ufw} on the VM \\
+\texttt{api} service & \file{api/Dockerfile}: gunicorn, Flask API and TensorFlow-CPU, with the model built in \\
 HTTPS & Caddy reverse proxy with an automatic Let's Encrypt certificate for \texttt{<ip>.sslip.io} \\
-Secrets (\file{.env}) & \file{deploy/.env} created on the VM only (\texttt{chmod 600}), never committed \\
+Secrets (\file{.env}) & \file{deploy/.env}, created on the VM only (\texttt{chmod 600}) and never committed \\
 Database & stays with the web app on my machine (Task 8 design) \\
 \bottomrule
 \end{tabularx}
 \caption{Mapping the stack to Azure.}\end{table}
 
-\textbf{Things researched first.}
-\begin{itemize}
-\item \emph{Free terms}: Azure for Students gives \$100 of credit valid for 12 months with no
-credit card; a 2-vCPU burstable VM costs a few cents per hour, so a week of uptime is a small
-fraction of the credit. I stop (deallocate) the VM when it is not needed.
-\item \emph{Allowed regions}: the subscription carries an Azure Policy \emph{``Allowed resource
-deployment regions''}; I read it with \cmd{az policy assignment list}: only Malaysia West, Central
-India, Austria East, UAE North and Southeast Asia are allowed.
-\item \emph{Size}: TensorFlow plus the model needs roughly 1\,GB of RAM at start-up; a 1\,GB VM
-would be killed by the OOM killer, so I needed a 2-vCPU size with $\geq$4\,GB and added 2\,GB swap.
-\item \emph{x86 vs Arm}: x86-64 image, so the same \texttt{tensorflow-cpu} wheel as on my laptop and
-in CI is used (Arm needs different wheels).
-\item \emph{Two firewalls}: the cloud-level Network Security Group must allow 80/443 \emph{and}
-the VM's own firewall (\texttt{ufw}) must too; either one alone blocks traffic.
-\item \emph{Protecting the API}: the prediction endpoint requires a secret \texttt{X-API-Key}
-header, compared in constant time (\texttt{hmac.compare\_digest}) so response timing does not
-leak the key; HTTPS means the key is never sent in clear text; request bodies are capped at
-6\,MB by Caddy and 5\,MB by the app; \texttt{/health} is public but reveals only the model version.
-\end{itemize}
+Before deploying I looked into a few things. The student credit lasts 12 months, and a 2-vCPU
+burstable VM costs a few cents an hour, so a week of uptime uses only a small part of it. I stop
+(deallocate) the VM when I do not need it. The subscription also has an Azure Policy called
+``Allowed resource deployment regions''. Reading it with \cmd{az policy assignment list} showed
+that only Malaysia West, Central India, Austria East, UAE North and Southeast Asia are allowed.
+
+For the size, TensorFlow plus the model needs roughly 1\,GB of RAM when it starts. A 1\,GB VM would
+get killed by the out-of-memory killer, so I needed a 2-vCPU size with at least 4\,GB, and I added
+2\,GB of swap on top. I chose an x86-64 image so the same \texttt{tensorflow-cpu} wheel as on my
+laptop and in CI could be used; Arm would need different wheels.
+
+There are two firewalls to get through. The Network Security Group at the cloud level has to allow
+ports 80 and 443, and so does the VM's own firewall, \texttt{ufw}. If either one blocks a port, the
+traffic does not get through.
+
+The prediction endpoint needs a secret \texttt{X-API-Key} header. The server compares it in
+constant time with \texttt{hmac.compare\_digest}, so the response time does not give away how much
+of a guessed key was right. Because of HTTPS the key never travels in clear text. Request bodies
+are capped at 6\,MB by Caddy and at 5\,MB by the app. \texttt{/health} is public, but it only shows
+the model name and version.
 
 \section*{Step-by-step deployment}
-Everything was done from \textbf{Azure Cloud Shell} (a browser terminal already logged in to
-my subscription) with two scripts from the repository, so the deployment is reproducible:
-\file{deploy/azure_cloudshell.sh} (cloud resources) and \file{deploy/vm_bootstrap.sh} (inside the VM).
+I did everything from Azure Cloud Shell, a terminal in the browser that is already logged in to my
+subscription, using two scripts from the repository so the deployment can be repeated:
+\file{deploy/azure_cloudshell.sh} for the cloud resources and \file{deploy/vm_bootstrap.sh} for the
+setup inside the VM.
 \begin{enumerate}
-\item \textbf{Register resource providers.} A brand-new subscription has
-\texttt{Microsoft.Compute}, \texttt{Microsoft.Network} and \texttt{Microsoft.Storage} in state
-\texttt{NotRegistered}, so every VM deployment fails. \cmd{az provider register -n Microsoft.Compute --wait}
-(and the same for Network and Storage) enables them.
-\item \textbf{Create the VM.} \cmd{az vm create -g rg-23L-0764-A2-Ops -n vm-23L-0764-A2-Ops --image Ubuntu2404 --size Standard_B2s_v2 --admin-username azureuser --generate-ssh-keys --public-ip-sku Standard --nsg-rule SSH}
-creates the VM, its disk, virtual network, public IP and a Network Security Group (NSG) that
-allows only SSH. \cmd{--generate-ssh-keys} creates a key pair, so no password login exists.
-\item \textbf{Open the cloud firewall.} \cmd{az vm open-port --port 80 --priority 1010} and
-\cmd{--port 443 --priority 1020} add NSG inbound rules for HTTP (needed for the certificate
-challenge) and HTTPS.
+\item Register the resource providers. On a brand-new subscription \texttt{Microsoft.Compute},
+\texttt{Microsoft.Network} and \texttt{Microsoft.Storage} are \texttt{NotRegistered}, and every VM
+deployment fails. \cmd{az provider register -n Microsoft.Compute --wait} (and the same for Network
+and Storage) turns them on.
+\item Create the VM:
+\cmd{az vm create -g rg-23L-0764-A2-Ops -n vm-23L-0764-A2-Ops --image Ubuntu2404 --size Standard_B2s_v2 --admin-username azureuser --generate-ssh-keys --public-ip-sku Standard --nsg-rule SSH}.
+This creates the VM, its disk, a virtual network, a public IP and a Network Security Group (NSG)
+that only allows SSH. \cmd{--generate-ssh-keys} creates a key pair, so there is no password login
+at all.
+\item Open the cloud firewall. \cmd{az vm open-port --port 80 --priority 1010} and
+\cmd{--port 443 --priority 1020} add NSG inbound rules for HTTP, which the certificate challenge
+needs, and for HTTPS.
 \shot{s7_vm_created}{The VM (size, region, state, public IP) and the NSG inbound rules 22/80/443, listed from Cloud Shell.}
-\item \textbf{Prepare the VM} (over SSH, \file{deploy/vm_bootstrap.sh}): installs Docker Engine
-and the compose plugin, enables \texttt{ufw} allowing only SSH/80/443 (the second firewall),
-creates 2\,GB swap, clones the repository (which contains the exported champion model, see
-\cref{ch:docker}), writes \file{deploy/.env} with a random 256-bit \texttt{API\_KEY}
-(\texttt{secrets.token\_urlsafe(32)}) and \texttt{API\_DOMAIN=<ip-with-dashes>.sslip.io}; the free
-sslip.io DNS resolves that name to the IP, so Let's Encrypt can issue a certificate without buying
-a domain.
-\shot{s7_ufw}{The VM's own firewall (\cmd{sudo ufw status verbose}), memory incl. swap, Docker versions.}
-\item \textbf{Start}: \cmd{docker compose --env-file deploy/.env -f deploy/docker-compose.cloud.yml up -d --build}.
-The API image is built with the model inside; Caddy starts only after the API is healthy, obtains
-the certificate and proxies \texttt{https://API\_DOMAIN} to \texttt{api:8080}. Only Caddy publishes
-ports; the API container is reachable only on the internal network.
+\item Prepare the VM over SSH with \file{deploy/vm_bootstrap.sh}. It installs Docker Engine and the
+compose plugin, turns on \texttt{ufw} with only SSH, 80 and 443 allowed (the second firewall),
+creates 2\,GB of swap and clones the repository, which includes the exported champion model
+(\cref{ch:tracking}). It then writes \file{deploy/.env} with a random 256-bit \texttt{API\_KEY}
+(\texttt{secrets.token\_urlsafe(32)}) and \texttt{API\_DOMAIN=<ip-with-dashes>.sslip.io}. The free
+sslip.io DNS service resolves that name to the IP, so Let's Encrypt can issue a certificate
+without me buying a domain.
+\shot{s7_ufw}{The VM's own firewall (\cmd{sudo ufw status verbose}), memory including swap, Docker versions.}
+\item Start the stack with
+\cmd{docker compose --env-file deploy/.env -f deploy/docker-compose.cloud.yml up -d --build}. The
+API image is built with the model inside. Caddy only starts once the API is healthy, then gets the
+certificate and forwards \texttt{https://API\_DOMAIN} to \texttt{api:8080}. Caddy is the only
+service that publishes ports, so the API container can only be reached on the internal network.
 \shot{s7_compose_up}{Cloud stack running: API healthy, Caddy up, HTTPS health check answered.}
-\item \textbf{Verify from another network}: \texttt{/health} opened from a different network.
+\item Check it from another network by opening \texttt{/health} there.
 \shot[0.6]{s7_health_phone}{\texttt{\APIURL/health} opened from outside the VM's network.}
 \end{enumerate}
 
-\begin{wrongbox}
-\textbf{(1)} The first \cmd{az vm create} failed in every region with an unreadable Python traceback
-(\emph{``The content for this response was already consumed''}, an Azure CLI bug that hides the
-real error). Checking the state showed the cause: the resource providers were
-\texttt{NotRegistered}; registering them fixed it. \textbf{(2)} Next, \texttt{Standard\_B2s} failed
-with \texttt{SkuNotAvailable}: \emph{``currently not available in location CentralIndia''} (and in
-all other allowed regions) because of capacity restrictions. I looped over equivalent small sizes;
-\texttt{Standard\_B2s\_v2} (2 vCPU, 8\,GB) was available in Central India. \textbf{(3)} The first
-API image build on the VM failed with \texttt{"/models/champion.keras": not found} because I started
-it before the champion had been trained and exported; it built once the model was committed.
-\end{wrongbox}
+Three things went wrong along the way. The first \cmd{az vm create} failed in every region with an
+unreadable Python traceback, \emph{``The content for this response was already consumed''}, which
+is an Azure CLI bug that hides the real error. When I checked the provider state, the cause turned
+out to be the unregistered resource providers, and registering them fixed it. Next,
+\texttt{Standard\_B2s} failed with \texttt{SkuNotAvailable} (\emph{``currently not available in
+location CentralIndia''}) because of capacity limits, and the same happened in the other allowed
+regions. I made the script loop over similar small sizes, and \texttt{Standard\_B2s\_v2} (2 vCPU,
+8\,GB) was available in Central India. Finally, the first API image build on the VM failed with
+\texttt{"/models/champion.keras": not found}, because I started it before the champion had been
+trained and exported. Once the model was committed, the build went through. After the final
+training round I pulled the new commit on the VM and rebuilt the API, so it now serves version 8.
 
 \section*{Testing with Postman}
-The collection \file{deploy/VisionGuard.postman_collection.json} has variables \texttt{base\_url}
-and \texttt{api\_key} and five requests with test scripts that assert the status code and the
-response fields:
+The collection \file{deploy/VisionGuard.postman_collection.json} has two variables,
+\texttt{base\_url} and \texttt{api\_key}, and five requests with test scripts that check the status
+code and the response fields:
 \begin{enumerate}
-\item \texttt{GET /health} $\rightarrow$ 200 and the model name/version;
-\item \texttt{POST /v1/predict} with an AI image (form-data field \texttt{image}) $\rightarrow$ 200, label, confidence, latency;
-\item the same with a real photo;
-\item without the \texttt{X-API-Key} header $\rightarrow$ 401;
-\item with a non-image file (I used a \texttt{.md} file) $\rightarrow$ 415.
+\item \texttt{GET /health} should return 200 with the model name and version.
+\item \texttt{POST /v1/predict} with an AI image (form-data field \texttt{image}) should return 200
+with the label, confidence and latency.
+\item The same with a real photo.
+\item The same without the \texttt{X-API-Key} header should return 401.
+\item A non-image file should return 415. I used a \texttt{.md} file.
 \end{enumerate}
 \shot{s7_postman_health}{Postman: health.}
-\shot{s7_postman_ai}{Postman: AI image (\texttt{ai\_1.jpg}) $\rightarrow$ 200, all three test assertions pass.}
-\shot{s7_postman_real}{Postman: real photo $\rightarrow$ verdict JSON.}
+\shot{s7_postman_ai}{Postman: AI image (\texttt{ai\_1.jpg}) returns 200 and all three test assertions pass.}
+\shot{s7_postman_real}{Postman: real photo and the verdict JSON.}
 \shot{s7_postman_401}{Postman: missing API key rejected (401).}
 \shot{s7_postman_415}{Postman: wrong file type (\texttt{.md}) rejected (415).}
 
-\textbf{Example response} (\texttt{real\_1.jpg}, from Postman):
+Here is the response for \texttt{real\_1.jpg} from Postman:
 {\small\begin{verbatim}
 {"confidence": 0.997, "filename": "real_1.jpg", "height": 451, "label": "Real",
  "latency_ms": 71.2, "model_name": "VisionGuard-23L-0764", "model_version": "8",
  "prob_ai": 0.0037, "sha256": "73d6e698...f2bcbeb1", "threshold": 0.62, "width": 800}
 \end{verbatim}}
-\textbf{Latency.} The model itself needs about 70\,ms per image on the 2-vCPU VM
-(\texttt{latency\_ms}, 69--77\,ms over all requests in the API log). The round trip seen from
-Lahore is much larger and varies with the client: 0.2--0.4\,s from the Flask app on my laptop
-(re-used HTTPS connection) and 0.7--1.4\,s from Postman, which opens a new TLS connection per
-request and uploads through its agent. Nearly all of the time is network, not model.
+The model itself takes about 70\,ms per image on the 2-vCPU VM (\texttt{latency\_ms} was between
+69 and 77\,ms for every request in the API log). The round trip from Lahore is much longer and
+depends on the client: 0.2 to 0.4\,s from the Flask app on my laptop, which re-uses its HTTPS
+connection, and 0.7 to 1.4\,s from Postman, which opens a new TLS connection for each request and
+uploads through its agent. Nearly all of that time is network.

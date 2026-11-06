@@ -1,164 +1,174 @@
 \chapter{Model Development with TensorFlow/Keras}\label{ch:model}
 
 \section*{Where training ran}\label{sec:2-0}
-All model code lives in \file{src/visionguard/} and is driven by \file{scripts/train.py}; every
-setting comes from \file{params.yaml} and can be overridden per run
-(\cmd{--set train.lr_head=0.0001}). Everything ran on a Google Colab T4 GPU in two notebooks:
-\file{notebooks/01_data_colab.ipynb} (download from Kaggle, audit, EDA, splits, DVC push) and
-\file{notebooks/02_train_colab.ipynb} (training, tuning, tracking). The second one clones the
-repository from GitHub and pulls the exact data version with \cmd{dvc pull}, so a run is fully
-identified by the \texttt{git\_commit} and \texttt{dvc\_data\_version} tags it logs. Colab already
-ships a matching TensorFlow/Keras pair, so only the tracking libraries are pinned there.
+All the model code is in \file{src/visionguard/} and \file{scripts/train.py} runs it. Every
+setting is read from \file{params.yaml} and can be overridden for a single run, for example
+\cmd{--set train.lr_head=0.0001}. Training ran on a Colab T4 GPU in two notebooks:
+\file{notebooks/01_data_colab.ipynb} downloads the data from Kaggle and does the audit, EDA,
+splits and DVC push, and \file{notebooks/02_train_colab.ipynb} does training, tuning and tracking.
+The second notebook clones the repository from GitHub and gets the exact data version with
+\cmd{dvc pull}, so each run can be traced back through the \texttt{git\_commit} and
+\texttt{dvc\_data\_version} tags it logs. Colab already comes with matching TensorFlow and Keras
+versions, so I only pinned the tracking libraries there.
 
 \section{Input pipeline}
-\textbf{Stages} (\file{src/visionguard/data.py}, \texttt{make\_dataset}):
+The pipeline is built in \file{src/visionguard/data.py} (\texttt{make\_dataset}) and has these
+steps:
 \begin{enumerate}
-\item \textbf{List}: \texttt{from\_tensor\_slices((paths, labels))} from the split CSV. Reading
-the split lists, not the folders, guarantees the same images land in the same split every time.
-\item \textbf{Decode + resize} (parallel): \texttt{tf.numpy\_function} calls the shared Pillow
-function \texttt{decode\_and\_resize} with \texttt{num\_parallel\_calls=AUTOTUNE}. The output is a
+\item List the images with \texttt{from\_tensor\_slices((paths, labels))} from the split CSV. I
+read the split lists and not the folders, so the same image always ends up in the same split.
+\item Decode and resize in parallel: \texttt{tf.numpy\_function} calls the shared Pillow function
+\texttt{decode\_and\_resize} with \texttt{num\_parallel\_calls=AUTOTUNE}. Each image comes out as a
 $224\times224\times3$ tensor of raw 0--255 values.
-\item \textbf{Cache}: the decoded images are cached in RAM after the first epoch as
-\texttt{uint8} (4$\times$ smaller than \texttt{float32}), so JPEG decoding happens once.
-\item \textbf{Shuffle} (training only): buffer = whole training set, fixed seed, reshuffled every epoch.
-\item \textbf{Batch} (32) and \textbf{augment} (training only, applied to whole batches):
-horizontal flip, rotation $\pm$5\%, zoom $\pm$10\%, translation $\pm$5\%, contrast $\pm$10\%.
-\item \textbf{Prefetch}: the CPU prepares the next batch while the GPU trains on the current one.
+\item Cache the decoded images after the first epoch as \texttt{uint8}, which is four times
+smaller than \texttt{float32}. JPEG decoding then happens only once.
+\item Shuffle the training set (only the training set) with a buffer as large as the set and a
+fixed seed. It is reshuffled every epoch.
+\item Batch (32 images) and, for training only, augment whole batches: horizontal flip, rotation
+$\pm$5\%, zoom $\pm$10\%, translation $\pm$5\% and contrast $\pm$10\%.
+\item Prefetch, so the CPU prepares the next batch while the GPU is busy with the current one.
 \end{enumerate}
-Validation and test data go through the same stages without shuffle and augmentation, so they
-are evaluated exactly as they are.
+Validation and test data go through the same steps without shuffling or augmentation, so they are
+evaluated exactly as they are.
 
-\textbf{Image size.} 224\,px is the resolution MobileNetV2 was pre-trained on, so its filters
-see objects at the scale they learned; it also keeps the batch cheap. One experiment uses
-160\,px to measure the effect (\cref{sec:3-5}).
+I used 224\,px because MobileNetV2 was pre-trained at that resolution, so its filters see objects
+at the scale they learned. It also keeps a batch cheap. One experiment uses 160\,px to see how
+much the resolution matters (\cref{sec:3-5}).
 
-\textbf{Aspect ratio.} The default resize \emph{squashes} every image to a square, so a
-$1000\times500$ photo is compressed horizontally by 2$\times$ and its aspect ratio is lost. The
-alternative (\texttt{resize\_mode: pad}) keeps the ratio and pads with black bars, but then the
-amount of padding itself tells the model the original shape, which is one of the shortcuts found
-in the EDA. I kept squashing for both classes so the shape signal is neutral.
+By default the resize squashes every image into a square, so a $1000\times500$ photo is squeezed
+to half its width and loses its aspect ratio. The other option, \texttt{resize\_mode: pad}, keeps
+the ratio and fills the rest with black bars, but then the size of the bars tells the model the
+original shape, which is one of the shortcuts I found in the EDA. I kept squashing for both
+classes so that the shape gives no signal either way.
 
-\textbf{Augmentation choices.} The augmentations change geometry and global contrast but keep
-fine texture. I deliberately avoided blur, noise and JPEG re-compression: those destroy the
-high-frequency artefacts that distinguish generated images, and could turn an AI image into
-something that statistically looks like a camera image while keeping the ``AI'' label.
+The augmentations change the geometry and the overall contrast and leave the fine texture alone. I
+left out blur, noise and JPEG re-compression on purpose. Those remove the high-frequency artefacts
+that give generated images away, and they could make an AI image look statistically like a camera
+photo while it still carries the ``AI'' label.
 
 \autofig{batch_plain}{A training batch after decode + resize, before augmentation.}
 \autofig{batch_augmented}{The same batch after the training-time augmentation.}
 
 \section{Baseline CNN from scratch}
-\textbf{Architecture} (\file{models.py}, \texttt{build\_baseline}). Every layer has a job:
+The baseline is \texttt{build\_baseline} in \file{models.py}. Going through it layer by layer:
 \begin{itemize}
-\item \textbf{Rescaling(1/255)}: maps pixels to $[0,1]$ inside the model, so serving code only
-sends raw pixels and cannot forget the scaling.
-\item \textbf{4 blocks of Conv2D(3$\times$3) $\rightarrow$ BatchNorm $\rightarrow$ ReLU
-$\rightarrow$ MaxPool(2)} with 32, 64, 128, 256 filters: convolutions learn local patterns
-(edges, then textures, then parts); doubling filters while halving resolution keeps compute
-balanced; BatchNorm normalises activations so training is stable with a higher learning rate
-(the conv has \texttt{use\_bias=False} because BN's shift replaces the bias); ReLU adds
-non-linearity; pooling gives translation tolerance and grows the receptive field.
-\item \textbf{GlobalAveragePooling}: averages each feature map to one number, turning
-$14\times14\times256$ into 256 values. Far fewer parameters than \texttt{Flatten} + Dense, which
-matters with only a few hundred training images.
-\item \textbf{Dropout(0.4)}, \textbf{Dense(64, ReLU)}, \textbf{Dropout(0.2)}: a small
-classifier head; dropout randomly zeroes units during training to reduce over-fitting.
-\item \textbf{Dense(1, sigmoid)}: one output $p = P(\text{AI}\mid\text{image})$.
+\item \texttt{Rescaling(1/255)} maps the pixels to $[0,1]$ inside the model. The serving code only
+has to send raw pixels and cannot forget the scaling.
+\item Four blocks of Conv2D(3$\times$3), BatchNorm, ReLU and MaxPool(2), with 32, 64, 128 and 256
+filters. The convolutions learn local patterns, first edges, then textures, then parts. Doubling
+the filters while halving the resolution keeps the compute per block roughly even. BatchNorm keeps
+the activations normalised so training stays stable (the convolutions use \texttt{use\_bias=False}
+because BatchNorm's shift does the job of the bias). ReLU adds the non-linearity, and pooling gives
+some tolerance to shifts and grows the receptive field.
+\item GlobalAveragePooling averages each feature map to one number, turning
+$14\times14\times256$ into 256 values. That needs far fewer parameters than \texttt{Flatten}
+followed by a Dense layer, which matters with only a few hundred training images.
+\item A small classifier head: Dropout(0.4), Dense(64, ReLU), Dropout(0.2). Dropout randomly zeroes
+units during training, which reduces over-fitting.
+\item Dense(1, sigmoid) gives a single output, $p = P(\text{AI}\mid\text{image})$.
 \end{itemize}
 
-\textbf{Loss, optimiser, metrics.} Binary cross-entropy is the negative log-likelihood of a
-Bernoulli output, the natural loss for one sigmoid unit, and it rewards calibrated probabilities
-(which I need, because the threshold is chosen later). Adam with learning rate $10^{-3}$ adapts
-per-parameter step sizes and works well without tuning on small CNNs. Metrics: accuracy (easy to
-read), ROC-AUC (threshold-free ranking quality), precision and recall of the AI class (the two
-error types of \cref{sec:2-5}). Inverse-frequency class weights stop the model from ignoring the
-smaller class.
+For the loss I used binary cross-entropy. It is the negative log-likelihood of a Bernoulli output,
+so it fits a single sigmoid unit, and it pushes the model towards calibrated probabilities, which I
+need because the decision threshold is picked afterwards. The optimiser is Adam, which adapts the
+step size per parameter; the baseline uses a learning rate of $3\cdot10^{-4}$ (the reason is in
+\cref{ch:tracking}). I track accuracy because it is easy to read, ROC-AUC because it measures
+ranking quality without a threshold, and precision and recall of the AI class because they are the
+two kinds of error discussed in \cref{sec:2-5}. Class weights set to the inverse class frequency
+stop the model from ignoring the smaller class.
 
 \gentable{baseline_layers}{Baseline CNN: output shape and parameter count per layer (\vgBaselineParams{} parameters).}
 \shot{s2_2_summary}{\texttt{model.summary()} of the baseline CNN.}
 
 \section{Transfer learning (MobileNetV2)}
-\textbf{Why MobileNetV2.} Its depthwise-separable convolutions give good ImageNet features with
-only about 2.3\,M backbone parameters (14\,MB on disk), so it fine-tunes quickly on a small
-dataset and runs fast on the CPU-only server. It is loaded with
-\cmd{keras.applications.MobileNetV2(include_top=False, weights="imagenet")}: no 1000-class
-classifier, just the convolutional feature extractor ending in a $7\times7\times1280$ map.
+I picked MobileNetV2 because its depthwise-separable convolutions give good ImageNet features with
+only about 2.3\,M backbone parameters (14\,MB on disk). It fine-tunes quickly on a small dataset
+and is fast on the CPU-only server. I load it with
+\cmd{keras.applications.MobileNetV2(include_top=False, weights="imagenet")}, which drops the
+1000-class classifier and keeps the convolutional feature extractor, ending in a
+$7\times7\times1280$ map.
 
-\textbf{Preprocessing.} MobileNetV2 was trained on pixels scaled to $[-1,1]$
-(\texttt{mobilenet\_v2.preprocess\_input} computes $x/127.5-1$). Feeding $[0,1]$ or $[0,255]$
-would shift every activation away from what the pre-trained filters expect and destroy the value
-of the weights. I put this scaling inside the model as \texttt{Rescaling(1/127.5, offset=-1)},
-so the saved model always applies it, in training and in serving. (EfficientNetB0, used in one
-experiment, contains its own normalisation and expects raw 0--255, so it gets an identity layer.)
+MobileNetV2 was trained on pixels scaled to $[-1,1]$ (\texttt{mobilenet\_v2.preprocess\_input}
+computes $x/127.5-1$). If I fed it $[0,1]$ or $[0,255]$ instead, every activation would be shifted
+away from what the pre-trained filters expect and the weights would lose most of their value. I put
+the scaling inside the model as \texttt{Rescaling(1/127.5, offset=-1)}, so the saved model applies
+it the same way in training and in serving. EfficientNetB0, which I tried in one experiment, has
+its own normalisation and expects raw 0--255 input, so it gets an identity layer here.
 
-\textbf{Head.} GlobalAveragePooling $\rightarrow$ Dropout(0.3) $\rightarrow$ Dense(1, sigmoid).
+The head is GlobalAveragePooling, Dropout(0.3) and Dense(1, sigmoid).
 
-\textbf{Stage 1 (frozen backbone).} \texttt{base.trainable = False}; only the head
-(1\,281 weights) learns, at learning rate $10^{-3}$. Random head weights produce large
-gradients; if the backbone were trainable, those gradients would wreck the pre-trained filters.
+Training has two stages. In stage 1 the backbone is frozen (\texttt{base.trainable = False}) and
+only the head's 1\,281 weights learn, at a learning rate of $10^{-3}$. A freshly initialised head
+produces large gradients, and if the backbone were trainable at this point those gradients would
+damage the pre-trained filters.
 
-\textbf{Stage 2 (last block unfrozen).} Only the layers of MobileNetV2's last inverted-residual
-block (\texttt{block\_16}) and the final \texttt{Conv\_1} are made trainable:
+In stage 2 I unfreeze only MobileNetV2's last inverted-residual block (\texttt{block\_16}) and the
+final \texttt{Conv\_1} layer:
 \IfFileExists{generated/transfer_unfrozen.tex}{\input{generated/transfer_unfrozen.tex}}{\vgPending}.
-The model is recompiled (required for the change to take effect) with a learning rate 100$\times$
-smaller ($10^{-5}$), so the high-level features adapt to generator artefacts without forgetting
-ImageNet. BatchNorm layers stay frozen and the backbone is called with \texttt{training=False}:
-otherwise BN would replace ImageNet statistics with statistics from batches of 32 images.
+The model has to be recompiled for this to take effect, and I recompile it with a learning rate
+100 times smaller ($10^{-5}$), so the high-level features can adapt to generator artefacts without
+forgetting ImageNet. The BatchNorm layers stay frozen and the backbone is called with
+\texttt{training=False}; otherwise BatchNorm would overwrite the ImageNet statistics with
+statistics from batches of 32 images.
 
 \gentable{transfer_trainable}{Trainable weights in each stage.}
 \autofig{transfer_stage1_curves}{Stage 1 (frozen backbone): loss and accuracy.}
 \autofig{transfer_stage2_curves}{Stage 2 (last block unfrozen, learning rate $10^{-5}$): loss and accuracy.}
 \gentable{transfer_layers}{Transfer model, top-level layers (\vgTransferParams{} parameters in total, \vgTransferTrainable{} trainable in stage 2).}
 
-\begin{wrongbox}
-In Keras 3, renaming the backbone with \texttt{base.\_name = "backbone"} silently had no effect,
-so \texttt{model.get\_layer("backbone")} failed when unfreezing. Passing \texttt{name="backbone"}
-to the constructor fixed it.
-\end{wrongbox}
+One bug cost me some time here. In Keras 3, renaming the backbone with
+\texttt{base.\_name = "backbone"} does nothing and raises no error, so
+\texttt{model.get\_layer("backbone")} failed when I tried to unfreeze it. Passing
+\texttt{name="backbone"} to the constructor fixed it.
 
 \section{Training discipline}
 \begin{itemize}
-\item \textbf{Seeds}: \cmd{keras.utils.set_random_seed(42)} seeds Python, NumPy and TensorFlow
-together; \texttt{PYTHONHASHSEED} is fixed; the split, the shuffle and every augmentation layer
-get explicit seeds. (GPU kernels are not bit-exact, so reruns on a GPU can differ in the third
-decimal; the seed is logged as a tag on every run.)
-\item \textbf{EarlyStopping} on \texttt{val\_loss}, patience 4, \texttt{restore\_best\_weights=True}.
-\item \textbf{ModelCheckpoint} on \texttt{val\_loss} with \texttt{save\_best\_only}. One checkpoint
-object is shared by both transfer stages, so it keeps the best epoch \emph{across} stages; after
-training I reload that file, so the evaluated model is the best one, not the last one.
-\item \textbf{ReduceLROnPlateau}: multiplies the learning rate by 0.3 after 2 epochs without
-improvement in \texttt{val\_loss}.
+\item Seeds: \cmd{keras.utils.set_random_seed(42)} seeds Python, NumPy and TensorFlow in one call,
+\texttt{PYTHONHASHSEED} is fixed, and the split, the shuffle and every augmentation layer get their
+own explicit seed. GPU kernels are not bit-exact, so a rerun on a GPU can still differ in the third
+decimal. The seed is logged as a tag on every run.
+\item EarlyStopping on \texttt{val\_loss} with patience 4 and \texttt{restore\_best\_weights=True}.
+The baseline uses patience 8 and cannot stop before epoch 6 (explained below).
+\item ModelCheckpoint on \texttt{val\_loss} with \texttt{save\_best\_only}. Both transfer stages
+share one checkpoint object, so it keeps the best epoch across the two stages. After training I
+reload that file, so the model I evaluate is the best one and not simply the last one.
+\item ReduceLROnPlateau multiplies the learning rate by 0.3 when \texttt{val\_loss} has not improved
+for 2 epochs.
 \end{itemize}
-Best epochs (lowest validation loss): baseline CNN \textbf{epoch \vgBaselineBestEpoch}, transfer
-model \textbf{epoch \vgTransferBestEpoch} (counted across both stages).
+The lowest validation loss was at epoch \vgBaselineBestEpoch{} for the baseline CNN and at epoch
+\vgTransferBestEpoch{} for the transfer model (counting across both stages).
 
 \autofig{baseline_curves}{Baseline CNN: loss and accuracy, best epoch marked in red.}
 \autofig{transfer_curves}{Transfer model, both stages: best epoch in red, start of fine-tuning dotted.}
 
-\textbf{What the curves show.} \emph{Baseline:} the training loss drops quickly to about 0.62 and
-then stays flat, so the small CNN under-fits rather than over-fits. For the first 13 epochs the
-validation accuracy is stuck at 0.45, the fraction of real images, i.e.\ it predicts ``real''
-for everything, and the validation loss even rises up to epoch 8: the BatchNorm running
-statistics used at validation time are still far from the training-batch statistics. Once they
-settle, the validation loss falls steadily to its minimum at epoch 38. This is why the baseline
-needed the lower learning rate and the warm-up before early stopping (\cref{ch:tracking} box).
-\emph{Transfer:} the validation loss reaches about 0.53 within 5 epochs of the frozen stage and then
-oscillates, while the training loss keeps falling to 0.37, so the widening gap is over-fitting on
-${\sim}$680 training images. Fine-tuning (dotted line) gave one more small improvement (best
-epoch 13, the first fine-tuning epoch) and then stopped helping, so early stopping ended the run
-4 epochs later and the best weights were restored.
+For the baseline, the training loss drops quickly to about 0.62 and then hardly moves, so the
+small CNN under-fits. For the first 13 epochs its validation accuracy is stuck at 0.45, which is
+the share of real images: it predicts ``real'' for everything. The validation loss even goes up
+until epoch 8, because the BatchNorm running statistics used at validation time are still far from
+the statistics of the training batches. Once they settle, the validation loss falls steadily until
+its minimum at epoch 38. My first baseline run stopped at epoch 1 for exactly this reason, which is
+why the baseline now has a lower learning rate and a warm-up before early stopping can trigger.
+
+The transfer model gets to a validation loss of about 0.53 within 5 epochs of the frozen stage and
+then bounces around, while the training loss keeps going down to 0.37. That widening gap is
+over-fitting on roughly 680 training images. Fine-tuning (the dotted line) gave one more small
+improvement, at epoch 13, which is the first fine-tuning epoch, and nothing after that, so early
+stopping ended the run 4 epochs later and restored the best weights.
 
 \section{Evaluation}\label{sec:2-5}
-\textbf{Which error is worse?} A \emph{false positive} (a real photo called AI-generated) is
-worse for this product. VisionGuard would be used to judge whether someone's photo is genuine; a
-false accusation harms a real person (a journalist, a seller, a student) and destroys trust in the
-tool. A false negative (an AI image passing as real) is bad but is the status quo without the
-tool. So I want high \emph{precision} on the AI class, i.e.\ a low false-positive rate.
+For this product, a false positive is the worse error: a real photo labelled AI-generated.
+VisionGuard is meant to help decide whether someone's photo is genuine, and a false accusation hurts
+a real person (a journalist, a seller, a student) and makes people stop trusting the tool. A false
+negative, an AI image that passes as real, is bad too, but that is what already happens when no
+detector is used. So I care most about precision on the AI class, in other words a low
+false-positive rate.
 
-\textbf{Threshold.} The test set is used once, at the end. The threshold is chosen on the
-\emph{validation} predictions: I scan $t\in[0.05,0.95]$ and pick the value that maximises
-$F_{\beta}$ with $\beta=0.5$, which weights precision twice as much as recall and therefore
-encodes the choice above. Chosen thresholds: baseline \vgBaselineThr, transfer \vgTransferThr.
-The threshold is saved with the model (\file{model_meta.json}) and used by the server.
+The test set is used only once, at the very end, so the threshold is chosen on the validation
+predictions. I scan $t\in[0.05,0.95]$ and take the value with the highest $F_{\beta}$ for
+$\beta=0.5$, which weights precision twice as much as recall and so matches the reasoning above.
+This gave a threshold of \vgBaselineThr{} for the baseline and \vgTransferThr{} for the transfer
+model. The threshold is saved next to the model in \file{model_meta.json} and the server reads it
+from there.
 
 \gentable{model_metrics}{Test-set metrics at the validation-chosen threshold (FPR = real photos called AI).}
 
@@ -180,90 +190,90 @@ The threshold is saved with the model (\file{model_meta.json}) and used by the s
 \caption{MobileNetV2 transfer}\end{subfigure}
 \caption{Test ROC curves.}\label{fig:rocs}\end{figure}
 
-The transfer model reaches test accuracy \vgTransferAccuracy{}, F1 \vgTransferFOne{} and ROC-AUC
-\vgTransferRocauc{}, with a false-positive rate of \vgTransferFalsepositiverate{}; the
-baseline reaches \vgBaselineAccuracy{}, \vgBaselineFOne{} and \vgBaselineRocauc{} (FPR
-\vgBaselineFalsepositiverate{}).
+On the test set the transfer model gets accuracy \vgTransferAccuracy{}, F1 \vgTransferFOne{} and
+ROC-AUC \vgTransferRocauc{}, with a false-positive rate of \vgTransferFalsepositiverate{}. The
+baseline gets \vgBaselineAccuracy{}, \vgBaselineFOne{} and \vgBaselineRocauc{}, with an FPR of
+\vgBaselineFalsepositiverate{}.
 
-\textbf{Comparison.} With the reference settings the transfer model is only slightly better than the
-CNN trained from scratch (AUC 0.754 vs 0.743, F1 0.676 vs 0.598); most of the gain is in recall
-at the chosen threshold (0.60 vs 0.48), while the baseline is more conservative (lower FPR,
-0.14 vs 0.21). The pre-trained features pay off once the transfer settings are tuned: the final
-champion \texttt{mnv2\_tuned} (same architecture, tuner's learning rate, dropout and 60 unfrozen
-layers) reaches test AUC 0.844, accuracy 0.733 and F1 0.731 (\cref{sec:3-5}).
+With the reference settings the transfer model is only a little better than the CNN trained from
+scratch (AUC 0.754 against 0.743, F1 0.676 against 0.598). Most of the difference is recall at the
+chosen threshold (0.60 against 0.48); the baseline is more conservative and has the lower FPR (0.14
+against 0.21). The pre-trained features start to pay off once the transfer settings are tuned. The
+final champion, \texttt{mnv2\_tuned}, has the same architecture with the tuner's learning rate,
+dropout and 60 unfrozen layers, and reaches a test AUC of 0.844, accuracy 0.733 and F1 0.731
+(\cref{sec:3-5}).
 
 \section{Error analysis}\label{sec:2-6}
-\file{scripts/error_analysis.py} takes the champion's test predictions, keeps the ten most
-\emph{confident} mistakes (the most informative ones), and measures simple properties of each:
-size, sharpness (variance of an edge filter), colour saturation, grey-scale, aspect ratio and
-format. These give each error a testable hypothesis instead of a guess.
+\file{scripts/error_analysis.py} takes the champion's test predictions and keeps the ten mistakes
+the model was most confident about, since those say the most about what it learned. For each one
+it measures size, sharpness (variance of an edge filter), colour saturation, whether it is
+grey-scale, aspect ratio and format, so every error gets a hypothesis I can check.
 
 \autofig{errors_grid}{The ten most confident test errors (true label, prediction, $p(\text{AI})$, size).}
 \gentable{errors}{Measured cues and hypothesis per error.}
 
-\textbf{Checking the hypotheses by eye.} The measured cues are only partly right; looking at the
-images shows a clearer pattern. \emph{False positives} (\#2, \#6, \#7, real $\to$ AI) are
-painted or illustrated ``real'' art: a richly coloured painted portrait, a 17th-century oil
-portrait and a flat vector illustration. The model has effectively learned ``painterly,
-saturated $\Rightarrow$ AI'', which is mostly true in the training data but not always. \#3 is a
-glossy, over-lit stock photo of smiling people, which looks like generator output. \emph{False
-negatives} (AI $\to$ real) are photorealistic: \#1 (cows with a robot in a real-looking barn),
-\#5 (a photographic face with a cartoon pasted in) and \#4 (a side-by-side composite of a
-painting and a press photo); \#8 has large text overlaid on the picture, and \#9/\#10 are
-landscapes whose style is close to real landscape paintings. Two errors (\#4, \#9) are extreme
-aspect ratios squashed to a square. So the main weakness is the label definition itself: style
-(painting vs photo) is confounded with origin (generator vs human).
+The measured cues only explain part of it. Looking at the images themselves showed a clearer
+pattern. The false positives (\#2, \#6 and \#7, real called AI) are all painted or illustrated
+``real'' art: a richly coloured painted portrait, a 17th-century oil portrait and a flat vector
+illustration. The model has more or less learned that painterly, saturated images are AI, which is
+usually true in the training data. \#3 is a glossy, over-lit stock photo of smiling people that
+honestly looks like generator output. The false negatives (AI called real) are photorealistic:
+\#1 shows cows next to a robot in a barn that looks real, \#5 is a photographic face with a cartoon
+pasted in, and \#4 is a side-by-side composite of a painting and a press photo. \#8 has large text
+over the picture, and \#9 and \#10 are landscapes that look a lot like real landscape paintings.
+Two of the errors (\#4 and \#9) have extreme aspect ratios that were squashed into a square. My
+conclusion is that the biggest weakness comes from the labels: in this dataset, style (painting or
+photo) is mixed up with origin (generator or human).
 
 \section{Tool lab: Keras Tuner}
 \subsection*{Toy part}
-\file{labs/tuner_toy.py} tunes a one-hidden-layer network on Fashion-MNIST with
-\textbf{Hyperband}: number of units $\in\{32,\dots,512\}$ and learning rate
-$\in\{10^{-2},10^{-3},10^{-4}\}$. Hyperband trains many configurations for a few epochs,
-keeps the best third, trains those longer, and repeats, so most of the budget goes to promising
-settings. \cmd{tuner.get_best_hyperparameters()} returns the winner.
+\file{labs/tuner_toy.py} tunes a network with one hidden layer on Fashion-MNIST using Hyperband.
+It searches the number of units ($32$ to $512$) and the learning rate ($10^{-2}$, $10^{-3}$ or
+$10^{-4}$). Hyperband trains many configurations for a few epochs, keeps the best third, trains
+those for longer and repeats, so most of the budget goes to the promising settings.
+\cmd{tuner.get_best_hyperparameters()} returns the winner, which was 448 units with a learning rate
+of $10^{-3}$ (test accuracy 0.88).
 \gentable{tuner_toy}{Toy tuner: best trials on Fashion-MNIST (validation accuracy).}
 \shot{s2_7_toy_tuner}{Toy tuner results summary.}
 
 \subsection*{Applied to VisionGuard}
-\file{scripts/tune.py} defines a \texttt{HyperModel} whose \texttt{fit()} reproduces the two-stage
-training inside each trial and searches the head learning rate (log-uniform
-$10^{-4}$--$3\cdot10^{-3}$), dropout (0.1--0.5) and how many backbone layers to unfreeze
-$\in\{0, 11\ (\text{last block}), 30, 60\}$ with \textbf{RandomSearch}, \vgTunerTrials{} trials,
-objective validation loss. Every trial is also logged to MLflow as a nested run.
+\file{scripts/tune.py} defines a \texttt{HyperModel} whose \texttt{fit()} runs the same two-stage
+training inside each trial. It searches the head learning rate (log-uniform between $10^{-4}$ and
+$3\cdot10^{-3}$), the dropout (0.1 to 0.5) and how many backbone layers to unfreeze (0, 11 for the
+last block, 30 or 60) with RandomSearch, \vgTunerTrials{} trials and validation loss as the
+objective. Each trial is also logged to MLflow as a nested run.
 
 \gentable{tuner_trials}{VisionGuard tuner trials, best first.}
 \autofig[0.95]{tuner_effects}{Validation loss of each trial against each hyper-parameter.}
 \gentable{tuner_effects}{Effect size: spread of mean validation loss across the levels of each hyper-parameter.}
-\shot{s2_7_tuner}{Tuner search output for VisionGuard.}
+\shot{s2_7_tuner}{The tuner search in MLflow: parent run with one nested run per trial.}
 
-Best trial: learning rate \vgTunerBestLr, dropout \vgTunerBestDrop, \vgTunerBestUnfrozen{}
-unfrozen layers (validation loss \vgTunerBestLoss). The hyper-parameter with the largest effect
-was \textbf{\vgTunerMostImportant}.
+The best trial used a learning rate of \vgTunerBestLr, dropout \vgTunerBestDrop{} and
+\vgTunerBestUnfrozen{} unfrozen layers (validation loss \vgTunerBestLoss). The setting with the
+largest effect was \vgTunerMostImportant. That makes sense to me: the number of unfrozen layers
+decides how far the ImageNet features can adapt to generator artefacts, which ImageNet never had to
+detect. With 0 layers the network can only re-weight generic object features, while 60 layers with
+a small learning rate let the mid-level texture filters change. It also has the biggest influence
+on over-fitting, which is why its levels differ the most in validation loss.
 
-\textbf{Why.} How much of the backbone is unfrozen decides how far the ImageNet features can adapt
-to generator artefacts (which ImageNet never had to detect): with 0 layers the network can only
-re-weight generic object features, while 60 layers with a small learning rate let the mid-level
-texture filters change; it also has the largest effect on over-fitting, which is why its levels
-differ most in validation loss.
-
-\textbf{Why the best validation score can over-fit the validation set.} The tuner looks at the
-validation loss of every trial and keeps the minimum. With many trials, some configurations score
-well partly by luck on this particular, small validation set (a ``winner's curse''): selection
-itself fits noise in the validation data, so the best score is an optimistic estimate. That is
-why the final numbers come from the untouched test set, used once, and why a clearly simpler
-setting within noise of the best is a reasonable choice.
+The best validation score from a search like this is too optimistic. The tuner looks at the
+validation loss of every trial and keeps the lowest one, and with many trials some configurations
+score well partly by luck on this small validation set (the ``winner's curse''). The selection
+itself fits noise in the validation data. That is why my final numbers come from the test set,
+which I used only once, and why a simpler setting that scores within noise of the best one would
+also be a reasonable pick.
 
 \section*{Bonus: Grad-CAM}
 \autofig{gradcam}{Grad-CAM heat maps: top row correct predictions, bottom row errors. Red = regions that pushed $p(\text{AI})$ up.}
 Grad-CAM takes the gradient of the output with respect to the last convolutional feature map,
-averages it per channel to get channel weights, and shows the weighted sum of the feature maps as
-a heat map.
+averages it per channel to get a weight for each channel, and shows the weighted sum of the feature
+maps as a heat map.
 
-\textbf{What the model looks at.} For the correct AI predictions the heat map covers the dense,
-swirling decorative texture (the ornamental ``G'' and the psychedelic face), i.e.\ the
-high-frequency patterns generators produce. For real images it focuses on a small region
-(the tortoise's shell, beside the Mona Lisa's face) and $p(\text{AI})$ stays below 0.5. In the
-errors the focus is on the colourful headscarf and flowers (painted portrait $\to$ AI), the bright
-faces of the stock photo, and on only the left, painted half of the composite (AI $\to$ real),
-which supports the error analysis: colour/texture style drives the decision more than true
-generation artefacts.
+For the AI images that were classified correctly, the heat map covers the dense, swirling
+decorative texture (the ornamental ``G'' and the psychedelic face), the kind of high-frequency
+pattern generators produce. For real images it looks at a small region (the tortoise's shell, the
+area beside the Mona Lisa's face) and $p(\text{AI})$ stays below 0.5. In the errors it looks at
+the colourful headscarf and flowers (painted portrait called AI), the bright faces in the stock
+photo, and only the left, painted half of the composite (AI called real). This agrees with the
+error analysis: colour and texture style drive the decision more than real generation artefacts
+do.

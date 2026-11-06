@@ -1,39 +1,41 @@
 \chapter{Integrating Flask and the Cloud API}\label{ch:integration}
 
-\textbf{How it works.} The web app has two interchangeable back-ends behind one interface
-(\file{app/predictors.py}): \texttt{LocalPredictor} wraps the in-process \texttt{Predictor};
-\texttt{RemotePredictor} sends the validated image bytes as multipart form data to
-\texttt{MODEL\_API\_URL/v1/predict} with the \texttt{X-API-Key} header over HTTPS, through one
-re-used \texttt{requests.Session} (connection pooling) with a 30\,s timeout. Switching is one
-environment variable, \texttt{INFERENCE\_MODE=remote}; routes, templates and the database code are
-unchanged. In remote mode the web image can be built without TensorFlow
-(\texttt{WITH\_TF=false}), because the model lives only in the cloud.
+The web app has two back-ends behind the same interface (\file{app/predictors.py}).
+\texttt{LocalPredictor} wraps the in-process \texttt{Predictor}. \texttt{RemotePredictor} sends the
+validated image bytes as multipart form data to \texttt{MODEL\_API\_URL/v1/predict} over HTTPS with
+the \texttt{X-API-Key} header, through one re-used \texttt{requests.Session} (so connections are
+pooled) and a 30\,s timeout. Switching between them is one environment variable,
+\texttt{INFERENCE\_MODE=remote}, and the routes, templates and database code stay the same. In
+remote mode the web image can even be built without TensorFlow (\texttt{WITH\_TF=false}), since the
+model only lives in the cloud.
 
-The flow per upload: the browser posts to \texttt{/predict} $\rightarrow$ the web app validates
-the file locally (wrong types never leave my machine) $\rightarrow$ calls the API $\rightarrow$
-stores the decision, the model version reported by the API, \texttt{inference\_mode = remote} and
-the round-trip latency in the database $\rightarrow$ shows the result page. For this test the web
-app ran directly on my Windows laptop (\file{scripts/run_local.ps1}: virtual environment,
-\texttt{FLASK\_DEBUG=0}, history in a local SQLite file through the same SQLAlchemy code); in the
-Compose stack the same code writes to PostgreSQL (\cref{ch:db}). If the API is unreachable
-or answers with an error, the user gets a friendly 503 page and the attempt is still recorded with
-\texttt{status = error}.
+For each upload, the browser posts to \texttt{/predict}, and the web app first validates the file
+locally, so a wrong file type never leaves my machine. It then calls the API, stores the decision,
+the model version reported by the API, \texttt{inference\_mode = remote} and the round-trip latency
+in the database, and shows the result page. If the API is down or returns an error, the user gets
+a 503 page and the attempt is still saved with \texttt{status = error}.
 
-\shot{s8_health_remote}{Web app health in remote mode: model backend = the cloud API.}
+For this test the web app ran directly on my Windows laptop through \file{scripts/run_local.ps1}.
+The script creates a virtual environment, sets \texttt{FLASK\_DEBUG=0} and keeps the history in a
+local SQLite file, using the same SQLAlchemy code that writes to PostgreSQL in the Compose stack
+(\cref{ch:db}).
+
+\shot{s8_health_remote}{Web app health in remote mode: the model backend is the cloud API.}
 \shot{s8_result_1}{Upload of \texttt{real\_1.jpg} through the UI, answered by the cloud model (record \#5, 230\,ms).}
 \shot{s8_result_2}{Upload of \texttt{ai\_2.jpg}: an AI image that the model misses ($p(\text{AI})=0.28<0.62$).}
 \shot{s8_history}{History menu: the database log, with \texttt{mode = remote} rows.}
 \shot{s8_vm_logs}{The same requests arriving in the API logs on the Azure VM.}
 
-\textbf{Multi-input test.} I uploaded six held-out test images from my laptop through the UI
-(three AI-generated, three real). All six were answered by the cloud model (version 8) and logged
-with \texttt{mode = remote}. All three real photos were classified correctly with high
-confidence ($p(\text{AI})$ 0.004, 0.005 and 0.32), and one of the three AI images was caught
-($p(\text{AI}) = 0.69$, just above the 0.62 threshold). The other two AI images (0.28 and 0.23) were
-called real, so 4 of 6 were correct. This matches the operating point I chose on purpose in
-\cref{sec:2-5}: the threshold favours precision (no real photo was accused) at the cost of
-recall on the AI class (test recall 0.66), and the two misses are photorealistic renders, the
-same error type as in \cref{sec:2-6}. The API logs show about 70\,ms of model time per image on the
-VM, while the round trip seen by the web app (Lahore $\rightarrow$ Central India over HTTPS) was
-197--416\,ms. The earlier rejected uploads (415, 422) never reached the API, because validation
-happens locally first.
+To test it with several inputs I uploaded six held-out test images from my laptop through the UI,
+three AI-generated and three real. The cloud model (version 8) answered all six and each one was
+logged with \texttt{mode = remote}. All three real photos were classified correctly, two of them
+very clearly ($p(\text{AI})$ of 0.004 and 0.005) and one less so (0.32). One of the three AI images
+was caught, with $p(\text{AI}) = 0.69$, just above the 0.62 threshold. The other two (0.28 and
+0.23) were called real, so the model got 4 out of 6 right.
+
+That is about what I expected from the threshold I chose in \cref{sec:2-5}. It favours precision,
+and indeed no real photo was accused, but the price is recall on the AI class, which is 0.66 on the
+test set. The API logs show about 70\,ms of model time per image on the VM, while the round trip
+seen by the web app, from Lahore to Central India over HTTPS, was between 197 and 416\,ms. The
+earlier rejected uploads (415 and 422) never reached the API at all, because the web app validates
+files before sending them.
